@@ -1,0 +1,3 @@
+flatnav
+h5py
+requests

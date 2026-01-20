@@ -1,0 +1,4 @@
+django
+docstring_parser
+marshmallow
+pydantic

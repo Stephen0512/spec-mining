@@ -1,0 +1,4 @@
+devtools
+fastapi
+httpx
+requests

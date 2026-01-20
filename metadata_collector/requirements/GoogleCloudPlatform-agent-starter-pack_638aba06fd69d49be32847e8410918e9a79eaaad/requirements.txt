@@ -1,0 +1,4 @@
+langchain_core
+langchain_google_vertexai
+streamlit
+streamlit_feedback

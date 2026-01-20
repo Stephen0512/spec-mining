@@ -1,0 +1,4 @@
+django
+flask
+flask_graphql
+graphene_django

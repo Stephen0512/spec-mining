@@ -1,0 +1,4 @@
+pyperclip
+PyYAML
+requests
+typer

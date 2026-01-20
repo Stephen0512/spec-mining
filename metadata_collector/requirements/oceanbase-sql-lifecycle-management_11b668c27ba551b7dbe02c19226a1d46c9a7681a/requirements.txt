@@ -1,0 +1,3 @@
+chardet
+lxml
+sqlgpt_parser

@@ -4,7 +4,7 @@ set -euo pipefail
 # Usage:
 #   ./run_original_and_collect_batch.sh final_projects.csv out_metrics.csv
 #
-# Input CSV format (one per line; header allowed):
+# Input CSV format (one entry per line; header allowed):
 #   owner/repo,sha
 # Example:
 #   0HugoHu/HugoHu-Python-PySpark,57848da
@@ -16,14 +16,12 @@ set -euo pipefail
 #   Place next to this script:
 #     ./requirements/<OWNER>-<REPO>_<SHA>/requirements.txt
 #
-# Notes:
-# - Runs repos one-by-one, cleans each repo directory afterward (keeps output CSV).
-# - Saves per-repo artifacts into a zip:
-#     <OWNER>-<REPO>_Original.zip
-#   containing:
-#     - <REPO>_Output.txt
-#     - coverage.xml (if generated)
-#     - coverage_run.log
+# Behavior:
+# - Processes projects one-by-one.
+# - NEVER stops early because tests/coverage fail.
+# - If tests fail/timeout => notes include tests_failed/timeout
+# - If coverage fails/missing/empty => notes include coverage_failed/no_coverage_data
+# - If clone/checkout fails => notes include clone_failed/checkout_failed and continues.
 #
 # Env knobs:
 #   WORKDIR=./_work
@@ -43,6 +41,18 @@ mkdir -p "$WORKDIR"
 
 # ---------------- Helpers ----------------
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+add_note() {
+  # add_note <notes_var_name> <note>
+  local __var="$1"
+  local __note="$2"
+  local __cur="${!__var:-}"
+  if [ -z "$__cur" ]; then
+    printf -v "$__var" "%s" "$__note"
+  else
+    printf -v "$__var" "%s;%s" "$__cur" "$__note"
+  fi
+}
 
 ensure_cloc() {
   if have_cmd cloc; then return; fi
@@ -90,7 +100,6 @@ fetch_repo_json() {
 }
 
 extract_stars_created() {
-  # prints: "<stars> <created_at>"
   local json="$1"
   python3 - <<'PY' "$json"
 import sys, json
@@ -145,9 +154,8 @@ PY
 }
 
 write_row() {
-  # Args: project owner repo sha url sloc stars age_years commit_count stmt_cov branch_cov notes
+  # Keep it simple: these fields should not contain commas.
   local project="$1" owner="$2" repo="$3" sha="$4" url="$5" sloc="$6" stars="$7" age="$8" commits="$9" stmt="${10}" br="${11}" notes="${12}"
-  # keep simple CSV (no commas expected in these fields)
   echo "${project},${owner},${repo},${sha},${url},${sloc},${stars},${age},${commits},${stmt},${br},${notes}" >> "$OUT_CSV"
 }
 
@@ -155,7 +163,6 @@ write_row() {
 echo "project,owner,repo,sha,url,sloc,stars,age_years,commit_count,stmt_cov_pct,branch_cov_pct,notes" > "$OUT_CSV"
 
 # ---------------- Main loop ----------------
-# Read input CSV. Skip header lines.
 tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
@@ -167,10 +174,7 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
 
   owner_repo="${line%%,*}"
   sha="${line#*,}"
-  if [ "$owner_repo" = "$line" ]; then
-    # no comma => bad row
-    continue
-  fi
+  [ "$owner_repo" = "$line" ] && continue
 
   owner_repo="${owner_repo// /}"
   sha="${sha// /}"
@@ -183,7 +187,6 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
 
   echo "===== ${owner_repo} @ ${sha} ====="
 
-  # Workspace per project
   CLONE_DIR="${WORKDIR}/${project}_Original"
   REPO_DIR="${CLONE_DIR}/${repo}"
 
@@ -194,7 +197,7 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
 
   # Clone
   if ! git clone "$url" "$REPO_DIR" >/dev/null 2>&1; then
-    notes="clone_failed"
+    add_note notes "clone_failed"
     write_row "$project" "$owner" "$repo" "$sha" "$url" "" "" "" "" "" "" "$notes"
     rm -rf "$CLONE_DIR" || true
     continue
@@ -202,7 +205,7 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
 
   # Checkout
   if ! (cd "$REPO_DIR" && git checkout -q "$sha" >/dev/null 2>&1); then
-    notes="checkout_failed"
+    add_note notes "checkout_failed"
     write_row "$project" "$owner" "$repo" "$sha" "$url" "" "" "" "" "" "" "$notes"
     rm -rf "$CLONE_DIR" || true
     continue
@@ -216,83 +219,100 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
   read -r stars created_at < <(extract_stars_created "$repo_json")
   age_years="$(age_years_from_created_at "$created_at")"
 
-  # Create venv + run tests
+  # ---------------- Tests + Coverage ----------------
+  # IMPORTANT: we temporarily disable "exit-on-error" because tests/coverage may fail.
+  test_exit=0
+  cov_run_exit=0
+  cov_xml_exit=0
+
   (
-    cd "$REPO_DIR"
+    set +e
+    cd "$REPO_DIR" || exit 2
 
     python3 -m venv venv
     # shellcheck disable=SC1090
     source venv/bin/activate
 
-    # Install root *.txt (best-effort)
+    # Root requirements
     for file in *.txt; do
-      if [ -f "$file" ]; then
-        pip install -r "$file" >/dev/null 2>&1 || true
-      fi
+      [ -f "$file" ] || continue
+      pip install -r "$file" >/dev/null 2>&1
     done
 
-    # Extra requirements: ./requirements/<OWNER>-<REPO>_<SHA>/requirements.txt
+    # Extra requirements
     extra_req="${EXTRA_REQ_ROOT}/${owner}-${repo}_${sha}/requirements.txt"
     if [ -f "$extra_req" ]; then
-      pip install -r "$extra_req" >/dev/null 2>&1 || true
+      pip install -r "$extra_req" >/dev/null 2>&1
     fi
 
-    # Install package with test deps
+    # Install package (best-effort)
     if [ -f myInstall.sh ]; then
-      bash ./myInstall.sh >/dev/null 2>&1 || true
+      bash ./myInstall.sh >/dev/null 2>&1
     else
-      pip install .[dev,test,tests,testing] >/dev/null 2>&1 || true
+      pip install .[dev,test,tests,testing] >/dev/null 2>&1
     fi
 
-    pip install pytest pandas coverage >/dev/null 2>&1 || true
+    pip install pytest pandas coverage >/dev/null 2>&1
 
-    # Run original tests (capture output)
+    # Tests
     timeout -k 9 "$TIMEOUT_SEC" pytest --continue-on-collection-errors &> "${repo}_Output.txt"
-    exit_code=$?
+    test_exit=$?
 
-    # Coverage run (best-effort; do not affect exit_code)
+    # Coverage
     COV_LOG="${PWD}/coverage_run.log"
-    : > "$COV_LOG" || true
-    rm -f .coverage coverage.xml || true
-    timeout -k 9 "$TIMEOUT_SEC" coverage run --branch -m pytest --continue-on-collection-errors -q >>"$COV_LOG" 2>&1 || true
-    coverage xml -o coverage.xml >>"$COV_LOG" 2>&1 || true
+    : > "$COV_LOG"
+    rm -f .coverage coverage.xml
 
-    deactivate || true
-    rm -rf venv || true
+    timeout -k 9 "$TIMEOUT_SEC" coverage run --branch -m pytest --continue-on-collection-errors -q >>"$COV_LOG" 2>&1
+    cov_run_exit=$?
 
-    exit "$exit_code"
-  )
-  exit_code=$?
+    coverage xml -o coverage.xml >>"$COV_LOG" 2>&1
+    cov_xml_exit=$?
+
+    deactivate >/dev/null 2>&1 || true
+    rm -rf venv >/dev/null 2>&1 || true
+
+    printf "%s %s %s\n" "$test_exit" "$cov_run_exit" "$cov_xml_exit" > ._codes.txt
+    exit 0
+  ) || true
+
+  if [ -f "${REPO_DIR}/._codes.txt" ]; then
+    read -r test_exit cov_run_exit cov_xml_exit < "${REPO_DIR}/._codes.txt" || true
+    rm -f "${REPO_DIR}/._codes.txt" || true
+  else
+    add_note notes "runner_failed"
+  fi
+
+  if [ "$test_exit" -eq 124 ] || [ "$test_exit" -eq 137 ]; then
+    add_note notes "timeout"
+  elif [ "$test_exit" -ne 0 ]; then
+    add_note notes "tests_failed"
+  fi
 
   # Parse coverage
   stmt_cov=""
   branch_cov=""
   if [ -f "${REPO_DIR}/coverage.xml" ]; then
     read -r stmt_cov branch_cov < <(parse_coverage_xml_rates "${REPO_DIR}/coverage.xml")
+    if [ -z "${stmt_cov}${branch_cov}" ]; then
+      add_note notes "no_coverage_data"
+    fi
   else
-    # Let notes reflect missing coverage if you want:
-    # notes="${notes:+$notes; }coverage_missing"
-    :
+    add_note notes "coverage_failed"
   fi
 
-  # If timed out, record and keep going
-  if [ $exit_code -eq 124 ] || [ $exit_code -eq 137 ]; then
-    notes="${notes:+$notes; }timeout"
-  elif [ $exit_code -ne 0 ]; then
-    notes="${notes:+$notes; }tests_failed"
+  # Also label coverage failures based on exit codes
+  if [ "$cov_run_exit" -ne 0 ] || [ "$cov_xml_exit" -ne 0 ]; then
+    add_note notes "coverage_failed"
   fi
 
-  # Save artifacts into zip next to WORKDIR (optional)
-  zip_name="${WORKDIR}/${project}_Original.zip"
-  # Ensure WORKDIR exists and use absolute path for zip
-  mkdir -p "$WORKDIR" || true
+  # Zip artifacts (never fatal)
   zip_name_abs="$(cd "$WORKDIR" && pwd)/${project}_Original.zip"
-  (
-    cd "$CLONE_DIR"
-    zip -qr "$zip_name_abs" "./${repo}/${repo}_Output.txt" "./${repo}/coverage.xml" "./${repo}/coverage_run.log" 2>/dev/null || true
-  )
+  ( cd "$CLONE_DIR" && zip -qr "$zip_name_abs" \
+      "./${repo}/${repo}_Output.txt" "./${repo}/coverage.xml" "./${repo}/coverage_run.log" \
+      2>/dev/null ) || true
 
-  # Write output row
+  # Write CSV row
   write_row "$project" "$owner" "$repo" "$sha" "$url" "$sloc" "$stars" "$age_years" "$commit_count" "$stmt_cov" "$branch_cov" "$notes"
 
   # Cleanup

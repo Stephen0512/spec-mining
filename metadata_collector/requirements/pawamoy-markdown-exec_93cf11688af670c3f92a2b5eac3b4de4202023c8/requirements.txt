@@ -1,0 +1,3 @@
+griffe
+markupsafe
+mkdocstrings

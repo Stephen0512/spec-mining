@@ -1,0 +1,3 @@
+contextlib2
+pytest_mock
+slixmpp
