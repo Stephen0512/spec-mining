@@ -96,84 +96,6 @@ if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
     tail -n 3 ${TESTING_REPO_NAME}_Output.txt
 
     # Helper functions
-    have_cmd() { command -v "$1" >/dev/null 2>&1; }
-    
-    compute_sloc() {
-      local repo_dir="$1"
-      if ! have_cmd cloc; then
-        echo ""
-        return
-      fi
-      local out
-      out="$(cloc --json --quiet "$repo_dir" 2>/dev/null || true)"
-      if [ -z "$out" ]; then
-        echo ""
-        return
-      fi
-      python3 - <<'PY' "$out"
-import sys, json
-try:
-    data = json.loads(sys.argv[1])
-    v = data.get("SUM", {}).get("code", 0)
-    print(int(v) if v else "")
-except Exception:
-    print("")
-PY
-    }
-    
-    compute_commit_count() {
-      local repo_dir="$1"
-      (cd "$repo_dir" && git rev-list --count HEAD 2>/dev/null) || echo ""
-    }
-    
-    fetch_repo_json() {
-      local owner="$1"
-      local repo="$2"
-      if have_cmd gh; then
-        gh api "repos/${owner}/${repo}" 2>/dev/null || true
-      else
-        curl -sS -H "Accept: application/vnd.github+json" \
-          "https://api.github.com/repos/${owner}/${repo}" || true
-      fi
-    }
-    
-    extract_stars_created() {
-      local json="$1"
-      python3 - <<'PY' "$json"
-import sys, json
-s = sys.argv[1]
-try:
-    d = json.loads(s)
-    stars = d.get("stargazers_count", "")
-    created = d.get("created_at", "")
-    stars = "" if stars is None else str(stars)
-    created = "" if created is None else str(created)
-    print(stars, created)
-except Exception:
-    print("", "")
-PY
-    }
-    
-    age_years_from_created_at() {
-      local created_at="$1"
-      if [ -z "$created_at" ]; then
-        echo ""
-        return
-      fi
-      python3 - <<'PY' "$created_at"
-import sys, datetime
-s = sys.argv[1].strip()
-try:
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    dt = datetime.datetime.fromisoformat(s)
-    now = datetime.datetime.now(datetime.timezone.utc)
-    age_years = (now - dt).total_seconds() / (365.25 * 24 * 3600)
-    print(f"{age_years:.1f}")
-except Exception:
-    print("")
-PY
-    }
     
     parse_coverage_xml() {
       local xml_path="$1"
@@ -197,10 +119,6 @@ except Exception:
 PY
     }
     
-    # Collect SLOC before coverage collection
-    REPO_DIR="$PWD"
-    SLOC=$(compute_sloc "$REPO_DIR")
-
     # Freeze the package version used in the current environment
     pip freeze > ${TESTING_REPO_NAME}_requirements.txt
     
@@ -210,15 +128,8 @@ PY
     # Collect coverage
     pytest --cov=. --cov-report=term-missing:skip-covered --cov-report=term --cov-report=xml:${TESTING_REPO_NAME}_Coverage.xml --cov-branch --cov-fail-under=0 > ${TESTING_REPO_NAME}_Coverage.txt 2>&1
     
-    # Calculate other metrics after coverage collection
-    COMMIT_COUNT=$(compute_commit_count "$REPO_DIR")
-    
-    # Get GitHub metadata
-    REPO_JSON=$(fetch_repo_json "$DEVELOPER_ID" "$TESTING_REPO_NAME")
-    read -r STARS CREATED_AT < <(extract_stars_created "$REPO_JSON")
-    AGE_YEARS=$(age_years_from_created_at "$CREATED_AT")
-    
     # Parse coverage XML if it exists
+    REPO_DIR="$PWD"
     STMT_COV=""
     BRANCH_COV=""
     COV_XML="${REPO_DIR}/${TESTING_REPO_NAME}_Coverage.xml"
@@ -243,10 +154,6 @@ PY
     echo "Test Time: ${TEST_TIME}s" >> $RESULTS_FILE
     
     # Save metrics to results file
-    echo "SLOC: ${SLOC}" >> $RESULTS_FILE
-    echo "Stars: ${STARS}" >> $RESULTS_FILE
-    echo "Age (years): ${AGE_YEARS}" >> $RESULTS_FILE
-    echo "Commit Count: ${COMMIT_COUNT}" >> $RESULTS_FILE
     echo "Statement Coverage: ${STMT_COV}%" >> $RESULTS_FILE
     echo "Branch Coverage: ${BRANCH_COV}%" >> $RESULTS_FILE
 
