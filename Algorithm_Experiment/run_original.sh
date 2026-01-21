@@ -47,6 +47,9 @@ python3 -m venv venv
 # Activate the virtual environment
 source venv/bin/activate
 
+# Install numpy
+pip install numpy==2.3.5
+
 # Install dependencies from all requirement files if they exist
 for file in *.txt; do
     if [ -f "$file" ]; then
@@ -92,6 +95,137 @@ if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
     # Show test summary
     tail -n 3 ${TESTING_REPO_NAME}_Output.txt
 
+    # Helper functions
+    have_cmd() { command -v "$1" >/dev/null 2>&1; }
+    
+    compute_sloc() {
+      local repo_dir="$1"
+      if ! have_cmd cloc; then
+        echo ""
+        return
+      fi
+      local out
+      out="$(cloc --json --quiet "$repo_dir" 2>/dev/null || true)"
+      if [ -z "$out" ]; then
+        echo ""
+        return
+      fi
+      python3 - <<'PY' "$out"
+import sys, json
+try:
+    data = json.loads(sys.argv[1])
+    v = data.get("SUM", {}).get("code", 0)
+    print(int(v) if v else "")
+except Exception:
+    print("")
+PY
+    }
+    
+    compute_commit_count() {
+      local repo_dir="$1"
+      (cd "$repo_dir" && git rev-list --count HEAD 2>/dev/null) || echo ""
+    }
+    
+    fetch_repo_json() {
+      local owner="$1"
+      local repo="$2"
+      if have_cmd gh; then
+        gh api "repos/${owner}/${repo}" 2>/dev/null || true
+      else
+        curl -sS -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/${owner}/${repo}" || true
+      fi
+    }
+    
+    extract_stars_created() {
+      local json="$1"
+      python3 - <<'PY' "$json"
+import sys, json
+s = sys.argv[1]
+try:
+    d = json.loads(s)
+    stars = d.get("stargazers_count", "")
+    created = d.get("created_at", "")
+    stars = "" if stars is None else str(stars)
+    created = "" if created is None else str(created)
+    print(stars, created)
+except Exception:
+    print("", "")
+PY
+    }
+    
+    age_years_from_created_at() {
+      local created_at="$1"
+      if [ -z "$created_at" ]; then
+        echo ""
+        return
+      fi
+      python3 - <<'PY' "$created_at"
+import sys, datetime
+s = sys.argv[1].strip()
+try:
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    dt = datetime.datetime.fromisoformat(s)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    age_years = (now - dt).total_seconds() / (365.25 * 24 * 3600)
+    print(f"{age_years:.1f}")
+except Exception:
+    print("")
+PY
+    }
+    
+    parse_coverage_xml() {
+      local xml_path="$1"
+      python3 - <<'PY' "$xml_path"
+import sys, xml.etree.ElementTree as ET
+p = sys.argv[1]
+try:
+    root = ET.parse(p).getroot()
+    line_rate = root.attrib.get("line-rate") or root.get("line-rate")
+    branch_rate = root.attrib.get("branch-rate") or root.get("branch-rate")
+    def pct(x):
+        if not x or x == "None": return ""
+        try: 
+            val = float(x)
+            return f"{val*100:.1f}"
+        except (ValueError, TypeError): 
+            return ""
+    print(f"{pct(line_rate)} {pct(branch_rate)}")
+except Exception:
+    print("", "")
+PY
+    }
+    
+    # Collect SLOC before coverage collection
+    REPO_DIR="$PWD"
+    SLOC=$(compute_sloc "$REPO_DIR")
+
+    # Freeze the package version used in the current environment
+    pip freeze > ${TESTING_REPO_NAME}_requirements.txt
+    
+    # Install pytest-cov
+    pip install pytest-cov
+
+    # Collect coverage
+    pytest --cov=. --cov-report=term-missing:skip-covered --cov-report=term --cov-report=xml:${TESTING_REPO_NAME}_Coverage.xml --cov-branch --cov-fail-under=0 > ${TESTING_REPO_NAME}_Coverage.txt 2>&1
+    
+    # Calculate other metrics after coverage collection
+    COMMIT_COUNT=$(compute_commit_count "$REPO_DIR")
+    
+    # Get GitHub metadata
+    REPO_JSON=$(fetch_repo_json "$DEVELOPER_ID" "$TESTING_REPO_NAME")
+    read -r STARS CREATED_AT < <(extract_stars_created "$REPO_JSON")
+    AGE_YEARS=$(age_years_from_created_at "$CREATED_AT")
+    
+    # Parse coverage XML if it exists
+    STMT_COV=""
+    BRANCH_COV=""
+    COV_XML="${REPO_DIR}/${TESTING_REPO_NAME}_Coverage.xml"
+    if [ -f "$COV_XML" ]; then
+      read -r STMT_COV BRANCH_COV < <(parse_coverage_xml "$COV_XML")
+    fi
+    
     # Clean up virtual environment
     deactivate
     rm -rf venv
@@ -107,9 +241,20 @@ if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
     echo "Test Start Time: ${TEST_START_TIME}" >> $RESULTS_FILE
     echo "Test End Time: ${TEST_END_TIME}" >> $RESULTS_FILE
     echo "Test Time: ${TEST_TIME}s" >> $RESULTS_FILE
+    
+    # Save metrics to results file
+    echo "SLOC: ${SLOC}" >> $RESULTS_FILE
+    echo "Stars: ${STARS}" >> $RESULTS_FILE
+    echo "Age (years): ${AGE_YEARS}" >> $RESULTS_FILE
+    echo "Commit Count: ${COMMIT_COUNT}" >> $RESULTS_FILE
+    echo "Statement Coverage: ${STMT_COV}%" >> $RESULTS_FILE
+    echo "Branch Coverage: ${BRANCH_COV}%" >> $RESULTS_FILE
 
     # Copy test output to results directory
     cp "${TESTING_REPO_NAME}/${TESTING_REPO_NAME}_Output.txt" $CLONE_DIR/
+    cp "${TESTING_REPO_NAME}/${TESTING_REPO_NAME}_Coverage.txt" $CLONE_DIR/
+    cp "${TESTING_REPO_NAME}/${TESTING_REPO_NAME}_Coverage.xml" $CLONE_DIR/
+    cp "${TESTING_REPO_NAME}/${TESTING_REPO_NAME}_requirements.txt" $CLONE_DIR/
 
     # Archive results
     zip -r "${CLONE_DIR}.zip" $CLONE_DIR

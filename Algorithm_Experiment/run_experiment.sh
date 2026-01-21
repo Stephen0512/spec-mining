@@ -23,7 +23,7 @@ url_with_sha="${TESTING_REPO_URL};${target_sha}"
 
 # Define the scripts to run
 # scripts=("run_pymop_b.sh" "run_pymop_c.sh" "run_pymop_c+.sh" "run_pymop_d.sh")
-scripts=("run_pymop_d.sh")
+scripts=("run_pymop_d.sh" "run_pymop_d_libs.sh")
 
 # Output the scripts to run
 echo "Scripts: ${scripts[@]}"

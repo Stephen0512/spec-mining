@@ -46,6 +46,11 @@ jobs:
             cd ./DyLin_DynaPyt_Experiment
             mkdir ./results
             
+        - name: Install python3-tk
+          run: |
+            sudo apt-get update
+            sudo apt-get install -y python3-tk
+            
         - name: Run Experiment
           run: |
             cd ./DyLin_DynaPyt_Experiment

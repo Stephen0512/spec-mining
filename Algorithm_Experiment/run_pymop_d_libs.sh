@@ -27,7 +27,7 @@ TESTING_REPO_NAME=$(basename -s .git "$TESTING_REPO_URL")
 DEVELOPER_ID=$(echo "$TESTING_REPO_URL" | sed -E 's|https://github.com/([^/]+)/.*|\1|')
 
 # Create combined name with developer ID and repo name
-CLONE_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_PyMOP_D"
+CLONE_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_PyMOP_D_Libs"
 
 # Create the directory if it does not exist
 mkdir -p "$CLONE_DIR"
@@ -54,6 +54,9 @@ python3 -m venv venv
 
 # Activate the virtual environment
 source venv/bin/activate
+
+# Install numpy
+pip install numpy==2.3.5
 
 # Install dependencies from all requirement files if they exist
 for file in *.txt; do
@@ -108,7 +111,7 @@ cd $TESTING_REPO_NAME
 TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 
 # Run tests with 1-hour timeout and save output
-/usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../mop-with-dynapt/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors' &> ${TESTING_REPO_NAME}_Output.txt
+/usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../mop-with-dynapt/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors' &> ${TESTING_REPO_NAME}_Output.txt
 exit_code=$?
 
 # Process test results if no timeout occurred

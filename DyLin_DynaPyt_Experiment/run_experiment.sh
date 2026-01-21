@@ -38,6 +38,8 @@ elif [ "$status_number" = "4" ]; then
     scripts=("run_dynapyt_12_with_pymop.sh" "run_pymop_12_with_pymop.sh" "run_dylin_12_with_pymop.sh" "run_pymop_libs_12_with_pymop.sh")
 elif [ "$status_number" = "5" ]; then
     scripts=("run_dynapyt_8_with_pymop.sh" "run_pymop_8_with_pymop.sh" "run_dylin_8_with_pymop.sh" "run_dynapyt_12_with_pymop.sh" "run_pymop_12_with_pymop.sh" "run_dylin_12_with_pymop.sh" "run_pymop_libs_8_with_pymop.sh" "run_dynapyt_libs_with_pymop.sh")
+elif [ "$status_number" = "6" ]; then
+    scripts=("run_pymop_8_with_pymop.sh" "run_pymop_12_with_pymop.sh" "run_pymop_libs_8_with_pymop.sh")
 else
     echo "Invalid status number: $status_number"
     exit 1
