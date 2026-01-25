@@ -2,10 +2,7 @@
 from array import array
 from collections import deque
 from pythonmop import Spec, call, getKwOrPosArg, VIOLATION
-import inspect
 import random
-
-ALLOWED_TYPES = (list, deque, set, array)
 
 # Add a seed to the random number generator
 random.seed(35)
@@ -29,7 +26,7 @@ class WrongTypeAddedAnalysis(Spec):
                 if func_self is None or func_name is None:
                     return
 
-                if isinstance(func_self, ALLOWED_TYPES) and func_name == "append":
+                if "__len__" in dir(func_self) and (func_name == "append" or func_name == "customAppend"):
                     kw['func_self'] = func_self
                     return self._check_add("append", **kw)
             except:
@@ -45,7 +42,7 @@ class WrongTypeAddedAnalysis(Spec):
                 if func_self is None or func_name is None:
                     return
 
-                if isinstance(func_self, ALLOWED_TYPES) and func_name == "insert":
+                if "__len__" in dir(func_self) and func_name == "insert":
                     kw['func_self'] = func_self
                     return self._check_add("insert", **kw)
             except:
@@ -61,7 +58,7 @@ class WrongTypeAddedAnalysis(Spec):
                 if func_self is None or func_name is None:
                     return
 
-                if isinstance(func_self, ALLOWED_TYPES) and func_name == "extend":
+                if "__len__" in dir(func_self) and func_name == "extend":
                     kw['func_self'] = func_self
                     return self._check_add("extend", **kw)
             except:
@@ -77,7 +74,7 @@ class WrongTypeAddedAnalysis(Spec):
                 if func_self is None or func_name is None:
                     return
 
-                if isinstance(func_self, ALLOWED_TYPES) and func_name == "add":
+                if "__len__" in dir(func_self) and func_name == "add":
                     kw['func_self'] = func_self
                     return self._check_add("add", **kw)
             except:
@@ -92,6 +89,8 @@ class WrongTypeAddedAnalysis(Spec):
     def _check_add(self, method, **kw):
         if method == "add_assign":
             left = kw['args'][1]
+            if not isinstance(left, list):
+                return False
         else:
             left = kw['func_self']
 

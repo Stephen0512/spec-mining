@@ -55,6 +55,25 @@ python3 -m venv venv
 # Activate the virtual environment
 source venv/bin/activate
 
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "alstr-todo-to-issue-action_165cd5e" ]; then
+    sed -i '' \
+        -e '/^ruamel\.yaml\.clib==0\.2\.6$/d' \
+        -e 's/^ruamel\.yaml==0\.17\.17$/ruamel.yaml==0.18.6/' \
+        requirements.txt
+fi
+
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "davidhalter-jedi_86c3a02c8cd6c0245cd8e86adf3979692dc9cab9" ]; then
+    git submodule update --init --recursive
+fi
+
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "Telefonica-HomePWN_0803981" ]; then
+    sed -i '87 s/^/# /; 92 s/^/# /; 97 s/^/# /' tests/test_utils.py
+fi
+
+# Install numpy
+pip install numpy==2.3.5
+
 # Install dependencies from all requirement files if they exist
 for file in *.txt; do
     if [ -f "$file" ]; then
@@ -63,6 +82,11 @@ for file in *.txt; do
 done
 
 # Install missing dependencies from the requirements directory if exists
+# pushd ../../requirements &> /dev/null
+# ls
+# echo "PWD: $PWD"
+# echo "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}"
+# popd &> /dev/null
 if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" ]; then
     pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
 fi
@@ -77,6 +101,10 @@ fi
 # Install required Python packages
 pip install pytest
 pip install pandas
+
+if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" ]; then
+    cp "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" .
+fi
 
 # ------------------------------------------------------------------------------------------------
 # Install PyMOP

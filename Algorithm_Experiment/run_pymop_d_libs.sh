@@ -55,6 +55,22 @@ python3 -m venv venv
 # Activate the virtual environment
 source venv/bin/activate
 
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "alstr-todo-to-issue-action_165cd5e" ]; then
+    sed -i '' \
+        -e '/^ruamel\.yaml\.clib==0\.2\.6$/d' \
+        -e 's/^ruamel\.yaml==0\.17\.17$/ruamel.yaml==0.18.6/' \
+        requirements.txt
+fi
+
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "davidhalter-jedi_86c3a02c8cd6c0245cd8e86adf3979692dc9cab9" ]; then
+    git submodule update --init --recursive
+fi
+
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "Telefonica-HomePWN_0803981" ]; then
+    sed -i '87 s/^/# /; 92 s/^/# /; 97 s/^/# /' tests/test_utils.py
+fi
+
 # Install numpy
 pip install numpy==2.3.5
 
@@ -80,6 +96,10 @@ fi
 # Install required Python packages
 pip install pytest
 pip install pandas
+
+if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" ]; then
+    cp "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" .
+fi
 
 # ------------------------------------------------------------------------------------------------
 # Install PyMOP
@@ -111,7 +131,7 @@ cd $TESTING_REPO_NAME
 TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 
 # Run tests with 1-hour timeout and save output
-/usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../mop-with-dynapt/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors' &> ${TESTING_REPO_NAME}_Output.txt
+/usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../mop-with-dynapt/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
 exit_code=$?
 
 # Process test results if no timeout occurred
