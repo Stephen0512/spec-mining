@@ -46,14 +46,6 @@ else
     git clone "$TESTING_REPO_URL" || { echo "Failed to clone $TESTING_REPO_URL"; exit 1; }
 fi
 
-# Special handling for some repositories
-if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
-    mv "$TESTING_REPO_NAME" tmp_repo
-    mkdir "$TESTING_REPO_NAME"
-    mv tmp_repo/py/* "$TESTING_REPO_NAME"
-    rm -rf tmp_repo
-fi
-
 # Navigate to the testing project directory
 cd "$TESTING_REPO_NAME" || { echo "Failed to enter directory $TESTING_REPO_NAME"; exit 1; }
 
@@ -88,6 +80,14 @@ for file in *.txt; do
         pip install -r "$file"
     fi
 done
+
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd py
+    pip install -r requirements.txt
+    pip install .[dev,test,tests,testing]
+    cd ..
+fi
 
 # Install missing dependencies from the requirements directory if exists
 if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" ]; then
