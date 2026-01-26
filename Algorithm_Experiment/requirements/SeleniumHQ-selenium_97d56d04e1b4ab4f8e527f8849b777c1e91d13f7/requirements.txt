@@ -1,4 +1,0 @@
-certifi
-urllib3
-websocket-client
-typing_extensions
