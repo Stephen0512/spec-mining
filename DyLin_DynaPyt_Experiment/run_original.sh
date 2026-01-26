@@ -73,6 +73,14 @@ for file in *.txt; do
     fi
 done
 
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd py
+    pip install -r requirements.txt
+    pip install .[dev,test,tests,testing]
+    cd ..
+fi
+
 # Install missing dependencies from the requirements directory if exists
 # pushd ../../requirements &> /dev/null
 # ls
