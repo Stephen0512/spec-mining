@@ -95,6 +95,7 @@ pip install pytest
 pip install pandas
 
 if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" ]; then
+    echo "pytest.ini found. Copying to current directory..."
     cp "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" .
 fi
 
