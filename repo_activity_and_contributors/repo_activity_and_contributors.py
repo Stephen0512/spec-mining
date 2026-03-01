@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
 """
-Fast repo stats + top contributors + contact email (profile + non-noreply commit email)
+Repo stats + top contributors + contact email.
 
-Input: Project data in csv format. Use FIRST column as repo (owner/repo).
+Input: Project data in CSV format. Use FIRST column as repo (owner/repo).
 
 Outputs per repo:
 - repo
-- latest_sha
-- age_years (repo age in years, based on created_at -> now)
-- commits (TOTAL commits in repo, all time on default branch)
-- stars
-- commits per month for past 12 months (12 columns, YYYY-MM)
-  (computed from /stats/commit_activity weekly totals; fast)
-- average commits/month over last 6 months
-- top 2 developers by commit count among last 100 commits (>=2 commits)
-- contact email for each dev: GitHub profile email + best non-noreply commit author email
+- latest_sha (GitHub API)
+- age_years (GitHub API created_at -> now)
+- commits (TOTAL commits in repo, all time on default branch)  [GraphQL]
+- stars (GitHub API)
+- commits per month for past 12 months (12 columns, YYYY-MM)  [LOCAL GIT (clone)]
+- average commits/month over last 6 months                    [LOCAL GIT (clone)]
+- top 2 developers by commit count among last 100 commits (>=2 commits) [GitHub API]
+- contact email for each dev: GitHub profile email + best non-noreply commit author email [GitHub API]
 
-Logging:
-- Prints progress for each repo and key steps
-- Handles GitHub rate limit sleeping
-- Handles stats endpoint 202 Accepted by retrying
-- Flushes output per repo so results are written incrementally
+Change requested:
+- Replace stats collection (/stats/commit_activity) with local git partial-clone + git log, then delete.
 
 Usage:
   export GITHUB_TOKEN=...
   python3 repo_activity_and_contributors.py --in success_projects.csv --out repo_stats.csv
+
+Notes:
+- Local git method uses: git clone --filter=blob:none --no-checkout
+- Requires `git` installed and reachable in PATH.
 """
 
 from __future__ import annotations
@@ -32,8 +32,12 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
+from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -46,6 +50,10 @@ GQL = "https://api.github.com/graphql"
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
+
+# ----------------------------
+# Time helpers
+# ----------------------------
 
 def month_start(dt: datetime) -> datetime:
     return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -73,6 +81,16 @@ def repo_age_years(created_at_iso: str) -> float:
     return age_days / 365.25
 
 
+def last_12_month_labels(now_utc: datetime) -> List[str]:
+    this_month = month_start(now_utc)
+    month_starts = [add_months(this_month, -11 + i) for i in range(12)]
+    return [month_label(m) for m in month_starts]
+
+
+# ----------------------------
+# GitHub REST / GraphQL helpers
+# ----------------------------
+
 def gh_get(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> requests.Response:
     """Low-level GET with rate-limit handling (returns Response)."""
     while True:
@@ -90,7 +108,6 @@ def gh_get(session: requests.Session, url: str, params: Dict[str, Any] | None = 
 
 
 def gh_json(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> Any:
-    """JSON GET with error handling + rate-limit handling."""
     r = gh_get(session, url, params=params)
     if r.status_code >= 400:
         raise RuntimeError(f"GitHub API error {r.status_code} for {url}: {r.text[:500]}")
@@ -201,44 +218,6 @@ def user_profile_email(session: requests.Session, login: str) -> str:
     return (u.get("email") or "").strip()
 
 
-def get_commit_activity_weeks(session: requests.Session, repo: str, max_retries: int = 10) -> List[Dict[str, Any]]:
-    """GET /stats/commit_activity with retry-on-202."""
-    url = f"{API}/repos/{repo}/stats/commit_activity"
-    for i in range(max_retries):
-        r = gh_get(session, url)
-
-        if r.status_code == 202:
-            sleep_s = min(30.0, 2.0 * (i + 1))
-            log(f"  [stats] 202 Accepted (generating) -> retry in {sleep_s:.1f}s")
-            time.sleep(sleep_s)
-            continue
-
-        if r.status_code >= 400:
-            raise RuntimeError(f"GitHub stats error {r.status_code} for {repo}: {r.text[:300]}")
-
-        data = r.json()
-        return data if isinstance(data, list) else []
-
-    raise RuntimeError(f"stats/commit_activity not ready after {max_retries} retries for {repo}")
-
-
-def monthly_counts_from_weeks(weeks: List[Dict[str, Any]], month_labels: List[str]) -> List[int]:
-    """Return 12 month totals aligned to month_labels (week total attributed to month of week-start)."""
-    totals = {m: 0 for m in month_labels}
-
-    for w in weeks:
-        ts = w.get("week")
-        total = int(w.get("total", 0))
-        if ts is None:
-            continue
-        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
-        mk = month_label(dt)
-        if mk in totals:
-            totals[mk] += total
-
-    return [totals[m] for m in month_labels]
-
-
 def total_commits_default_branch(session: requests.Session, repo: str) -> int:
     """Exact total commit count (all time) on the repo's default branch, via GraphQL."""
     if "/" not in repo:
@@ -264,14 +243,55 @@ def total_commits_default_branch(session: requests.Session, repo: str) -> int:
     data = gql_request(session, query, {"owner": owner, "name": name})
     repo_data = (data or {}).get("repository") or {}
     dbr = repo_data.get("defaultBranchRef")
-
     if not dbr:
         return 0
-
     target = dbr.get("target") or {}
     history = target.get("history") or {}
     return int(history.get("totalCount", 0) or 0)
 
+
+# ----------------------------
+# Local git stats (clone -> log -> delete)
+# ----------------------------
+
+def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> str:
+    return subprocess.check_output(cmd, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
+
+
+def git_monthly_stats(repo: str, labels: List[str]) -> Tuple[List[int], float]:
+    """
+    Returns:
+      - monthly_counts aligned to labels (last 12 months)
+      - avg6 (avg commits/month over last 6 months)
+    Strategy:
+      - partial clone with blobs filtered and no checkout
+      - git log since 12 months ago, date formatted as YYYY-MM, count occurrences
+      - delete repo directory
+    """
+    repo_url = f"https://github.com/{repo}.git"
+    tmpdir = tempfile.mkdtemp(prefix="repo_stats_")
+    try:
+        # Partial clone, no checkout (minimize blobs)
+        run_cmd(["git", "clone", "--filter=blob:none", "--no-checkout", repo_url, tmpdir])
+
+        out = run_cmd(
+            ["git", "log", "--since=12 months ago", "--pretty=format:%ad", "--date=format:%Y-%m"],
+            cwd=tmpdir,
+        )
+        months = out.splitlines() if out else []
+        c = Counter(months)
+
+        monthly_counts = [int(c.get(lbl, 0)) for lbl in labels]
+        avg6 = sum(monthly_counts[-6:]) / 6.0
+        return monthly_counts, avg6
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ----------------------------
+# Main
+# ----------------------------
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -297,10 +317,7 @@ def main() -> int:
     log(f"Loaded {len(repos)} repos from {args.inp}")
 
     now = datetime.now(timezone.utc)
-    this_month = month_start(now)
-
-    month_starts = [add_months(this_month, -11 + i) for i in range(12)]
-    labels = [month_label(m) for m in month_starts]
+    labels = last_12_month_labels(now)
 
     fieldnames = [
         "repo",
@@ -345,12 +362,11 @@ def main() -> int:
                 log("  fetching TOTAL commits via GraphQL (default branch)")
                 row["commits"] = total_commits_default_branch(session, repo)
 
-                log("  fetching commit_activity stats (fast)")
-                weeks = get_commit_activity_weeks(session, repo)
-                counts = monthly_counts_from_weeks(weeks, labels)
-                for m, c in zip(labels, counts):
+                log("  cloning repo (partial) and computing monthly stats, then deleting")
+                monthly_counts, avg6 = git_monthly_stats(repo, labels)
+                for m, c in zip(labels, monthly_counts):
                     row[f"commits_{m}"] = c
-                row["avg_commits_last_6_months"] = sum(counts[-6:]) / 6.0
+                row["avg_commits_last_6_months"] = f"{avg6:.3f}"
 
                 log("  fetching last 100 commits for top contributors")
                 commits100 = last_commits(session, repo, 100)
@@ -369,6 +385,10 @@ def main() -> int:
 
                 row["notes"] = ";".join(notes)
 
+            except subprocess.CalledProcessError as e:
+                msg = (e.output or "").splitlines()[-1] if getattr(e, "output", None) else str(e)
+                row["notes"] = f"git_error:{msg[:200]}"
+                log(f"  [ERROR] {row['notes']}")
             except Exception as e:
                 row["notes"] = f"error:{type(e).__name__}:{str(e)[:200]}"
                 log(f"  [ERROR] {row['notes']}")
