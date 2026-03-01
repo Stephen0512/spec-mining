@@ -7,7 +7,8 @@ Input: Project data in csv format. Use FIRST column as repo (owner/repo).
 Outputs per repo:
 - repo
 - latest_sha
-- commits (total in last year)
+- commits (TOTAL commits in repo, all time on default branch)
+- commits_last_year (total commits in last year, from stats)
 - stars
 - commits per month for past 12 months (12 columns, YYYY-MM)
   (computed from /stats/commit_activity weekly totals; fast)
@@ -24,10 +25,6 @@ Logging:
 Usage:
   export GITHUB_TOKEN=...
   python3 repo_activity_and_contributors.py --in success_projects.csv --out repo_stats.csv
-
-Notes:
-- /stats/commit_activity attributes each week’s total to the month containing that week’s start date.
-  This is fast and consistent; if you want exact splitting of weeks across month boundaries, say so.
 """
 
 from __future__ import annotations
@@ -43,6 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 API = "https://api.github.com"
+GQL = "https://api.github.com/graphql"
 
 
 def log(msg: str) -> None:
@@ -87,11 +85,29 @@ def gh_json(session: requests.Session, url: str, params: Dict[str, Any] | None =
     return r.json()
 
 
+def gql_request(session: requests.Session, query: str, variables: Dict[str, Any]) -> Any:
+    """GraphQL POST with basic error handling."""
+    r = session.post(GQL, json={"query": query, "variables": variables})
+    if r.status_code == 403 and "rate limit" in r.text.lower():
+        # GraphQL rate limit is separate but still uses reset headers sometimes
+        reset = int(r.headers.get("X-RateLimit-Reset", 0))
+        remaining = r.headers.get("X-RateLimit-Remaining")
+        wait = max(reset - int(time.time()) + 2, 1)
+        log(f"[GQL RATE LIMIT] remaining={remaining} reset={reset} -> sleeping {wait}s")
+        time.sleep(wait)
+        return gql_request(session, query, variables)
+
+    if r.status_code >= 400:
+        raise RuntimeError(f"GitHub GraphQL error {r.status_code}: {r.text[:500]}")
+
+    data = r.json()
+    if "errors" in data and data["errors"]:
+        raise RuntimeError(f"GitHub GraphQL errors: {str(data['errors'])[:500]}")
+    return data.get("data")
+
+
 def read_repos_first_col(csv_path: str) -> List[str]:
-    """
-    Reads first column from CSV with or without header.
-    Keeps unique repos in order. Skips obvious header tokens.
-    """
+    """Reads first column from CSV with or without header. Keeps unique repos in order."""
     repos: List[str] = []
     seen = set()
     header_tokens = {"repo", "repository", "project"}
@@ -105,7 +121,6 @@ def read_repos_first_col(csv_path: str) -> List[str]:
                 continue
             if repo.lower() in header_tokens:
                 continue
-            # basic sanity: looks like owner/repo
             if "/" not in repo:
                 continue
             if repo not in seen:
@@ -148,10 +163,6 @@ def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], 
 
 
 def top2_devs_from_last100(commits: List[Dict[str, Any]]) -> List[Tuple[str, int, Optional[str]]]:
-    """
-    Top 2 devs by commit count among last 100 commits, requiring >=2 commits.
-    Returns [(login, count, best_non_noreply_commit_email), ...] (len 0..2)
-    """
     counts: Dict[str, int] = {}
     best_email: Dict[str, str] = {}
 
@@ -178,10 +189,7 @@ def user_profile_email(session: requests.Session, login: str) -> str:
 
 
 def get_commit_activity_weeks(session: requests.Session, repo: str, max_retries: int = 10) -> List[Dict[str, Any]]:
-    """
-    GET /stats/commit_activity
-    May return 202 while GitHub prepares stats. Retry with backoff.
-    """
+    """GET /stats/commit_activity with retry-on-202."""
     url = f"{API}/repos/{repo}/stats/commit_activity"
     for i in range(max_retries):
         r = gh_get(session, url)
@@ -196,32 +204,69 @@ def get_commit_activity_weeks(session: requests.Session, repo: str, max_retries:
             raise RuntimeError(f"GitHub stats error {r.status_code} for {repo}: {r.text[:300]}")
 
         data = r.json()
-        if isinstance(data, list):
-            return data
-        return []
+        return data if isinstance(data, list) else []
 
     raise RuntimeError(f"stats/commit_activity not ready after {max_retries} retries for {repo}")
 
 
 def monthly_counts_from_weeks(weeks: List[Dict[str, Any]], month_labels: List[str]) -> Tuple[List[int], int]:
     """
-    weeks: list of 52 objects: {"total": int, "week": unix_ts, "days":[...]}
-    We attribute each week's 'total' to the month containing the week start date.
-    Also returns total commits (sum of all weeks).
+    Returns:
+      - list of 12 month totals aligned to month_labels
+      - commits_last_year = sum(weekly totals)
     """
     totals = {m: 0 for m in month_labels}
-    total_commits = 0
+    commits_last_year = 0
+
     for w in weeks:
         ts = w.get("week")
         total = int(w.get("total", 0))
-        total_commits += total
+        commits_last_year += total
         if ts is None:
             continue
         dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
         mk = month_label(dt)
         if mk in totals:
             totals[mk] += total
-    return [totals[m] for m in month_labels], total_commits
+
+    return [totals[m] for m in month_labels], commits_last_year
+
+
+def total_commits_default_branch(session: requests.Session, repo: str) -> int:
+    """
+    Exact total commit count (all time) on the repo's default branch, via GraphQL.
+    """
+    if "/" not in repo:
+        return 0
+    owner, name = repo.split("/", 1)
+
+    query = """
+    query($owner: String!, $name: String!) {
+      repository(owner: $owner, name: $name) {
+        defaultBranchRef {
+          target {
+            ... on Commit {
+              history {
+                totalCount
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    data = gql_request(session, query, {"owner": owner, "name": name})
+    repo_data = (data or {}).get("repository") or {}
+    dbr = repo_data.get("defaultBranchRef")
+
+    if not dbr:
+        # e.g., empty repo or unusual state
+        return 0
+
+    target = dbr.get("target") or {}
+    history = target.get("history") or {}
+    return int(history.get("totalCount", 0) or 0)
 
 
 def main() -> int:
@@ -241,7 +286,7 @@ def main() -> int:
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "sample-repos-and-participants",
+        "User-Agent": "repo-activity-and-contributors",
     })
 
     repos = read_repos_first_col(args.inp)
@@ -250,14 +295,14 @@ def main() -> int:
     now = datetime.now(timezone.utc)
     this_month = month_start(now)
 
-    # 12 buckets: oldest -> newest (includes current month-to-date as newest bucket)
     month_starts = [add_months(this_month, -11 + i) for i in range(12)]
     labels = [month_label(m) for m in month_starts]
 
     fieldnames = [
         "repo",
         "latest_sha",
-        "commits",
+        "commits",            # ALL-TIME total commits (default branch)
+        "commits_last_year",  # last-year total from stats (optional but useful)
         "stars",
         *[f"commits_{m}" for m in labels],
         "avg_commits_last_6_months",
@@ -291,10 +336,13 @@ def main() -> int:
                 log("  fetching latest SHA")
                 row["latest_sha"] = latest_commit_sha(session, repo)
 
+                log("  fetching TOTAL commits via GraphQL (default branch)")
+                row["commits"] = total_commits_default_branch(session, repo)
+
                 log("  fetching commit_activity stats (fast)")
                 weeks = get_commit_activity_weeks(session, repo)
-                counts, total_commits = monthly_counts_from_weeks(weeks, labels)
-                row["commits"] = total_commits
+                counts, commits_last_year = monthly_counts_from_weeks(weeks, labels)
+                row["commits_last_year"] = commits_last_year
                 for m, c in zip(labels, counts):
                     row[f"commits_{m}"] = c
                 row["avg_commits_last_6_months"] = sum(counts[-6:]) / 6.0
@@ -321,7 +369,7 @@ def main() -> int:
                 log(f"  [ERROR] {row['notes']}")
 
             w.writerow(row)
-            out_f.flush()  # make sure results are written incrementally
+            out_f.flush()
 
             if args.sleep:
                 time.sleep(args.sleep)
