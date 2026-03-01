@@ -5,8 +5,10 @@ Fast repo stats + top contributors + contact email (profile + non-noreply commit
 Input: Project data in csv format. Use FIRST column as repo (owner/repo).
 
 Outputs per repo:
+- repo
+- latest_sha
+- commits (total in last year)
 - stars
-- latest commit SHA
 - commits per month for past 12 months (12 columns, YYYY-MM)
   (computed from /stats/commit_activity weekly totals; fast)
 - average commits/month over last 6 months
@@ -201,22 +203,25 @@ def get_commit_activity_weeks(session: requests.Session, repo: str, max_retries:
     raise RuntimeError(f"stats/commit_activity not ready after {max_retries} retries for {repo}")
 
 
-def monthly_counts_from_weeks(weeks: List[Dict[str, Any]], month_labels: List[str]) -> List[int]:
+def monthly_counts_from_weeks(weeks: List[Dict[str, Any]], month_labels: List[str]) -> Tuple[List[int], int]:
     """
     weeks: list of 52 objects: {"total": int, "week": unix_ts, "days":[...]}
     We attribute each week's 'total' to the month containing the week start date.
+    Also returns total commits (sum of all weeks).
     """
     totals = {m: 0 for m in month_labels}
+    total_commits = 0
     for w in weeks:
         ts = w.get("week")
         total = int(w.get("total", 0))
+        total_commits += total
         if ts is None:
             continue
         dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
         mk = month_label(dt)
         if mk in totals:
             totals[mk] += total
-    return [totals[m] for m in month_labels]
+    return [totals[m] for m in month_labels], total_commits
 
 
 def main() -> int:
@@ -251,8 +256,9 @@ def main() -> int:
 
     fieldnames = [
         "repo",
-        "stars",
         "latest_sha",
+        "commits",
+        "stars",
         *[f"commits_{m}" for m in labels],
         "avg_commits_last_6_months",
         "top1_login",
@@ -287,7 +293,8 @@ def main() -> int:
 
                 log("  fetching commit_activity stats (fast)")
                 weeks = get_commit_activity_weeks(session, repo)
-                counts = monthly_counts_from_weeks(weeks, labels)
+                counts, total_commits = monthly_counts_from_weeks(weeks, labels)
+                row["commits"] = total_commits
                 for m, c in zip(labels, counts):
                     row[f"commits_{m}"] = c
                 row["avg_commits_last_6_months"] = sum(counts[-6:]) / 6.0
