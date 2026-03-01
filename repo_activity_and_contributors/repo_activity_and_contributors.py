@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
 """
-Repo stats + top contributors + contact email.
+Repo stats + top contributors + contact email (fast, no cloning).
 
 Input: Project data in CSV format. Use FIRST column as repo (owner/repo).
 
 Outputs per repo:
 - repo
-- latest_sha (GitHub API)
-- age_years (GitHub API created_at -> now)
-- commits (TOTAL commits in repo, all time on default branch)  [GraphQL]
-- stars (GitHub API)
-- commits per month for past 12 months (12 columns, YYYY-MM)  [LOCAL GIT (clone)]
-- average commits/month over last 6 months                    [LOCAL GIT (clone)]
-- top 2 developers by commit count among last 100 commits (>=2 commits) [GitHub API]
-- contact email for each dev: GitHub profile email + best non-noreply commit author email [GitHub API]
+- latest_sha
+- age_years (repo age in years, based on created_at -> now)
+- stars
+- total_commits (TOTAL commits in repo, all time on default branch)         [GraphQL]
+- avg_commits_last_6_months (commits since ~6 months ago / 6)              [GraphQL]
+- top 2 developers by commit count among last 100 commits (>=2 commits)    [REST]
+- contact email for each dev: GitHub profile email + best non-noreply commit author email [REST]
 
-Change requested:
-- Replace stats collection (/stats/commit_activity) with local git partial-clone + git log, then delete.
+Logging:
+- Prints progress for each repo and key steps
+- Handles GitHub rate limit sleeping (REST + GraphQL)
+- Flushes output per repo so results are written incrementally
 
 Usage:
   export GITHUB_TOKEN=...
   python3 repo_activity_and_contributors.py --in success_projects.csv --out repo_stats.csv
-
-Notes:
-- Local git method uses: git clone --filter=blob:none --no-checkout
-- Requires `git` installed and reachable in PATH.
 """
 
 from __future__ import annotations
@@ -32,13 +29,9 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
-from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -55,20 +48,6 @@ def log(msg: str) -> None:
 # Time helpers
 # ----------------------------
 
-def month_start(dt: datetime) -> datetime:
-    return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-
-def add_months(dt: datetime, months: int) -> datetime:
-    y = dt.year + (dt.month - 1 + months) // 12
-    m = (dt.month - 1 + months) % 12 + 1
-    return dt.replace(year=y, month=m, day=1)
-
-
-def month_label(dt: datetime) -> str:
-    return dt.strftime("%Y-%m")
-
-
 def parse_github_time(s: str) -> datetime:
     # e.g., "2013-10-05T23:12:34Z"
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
@@ -81,14 +60,18 @@ def repo_age_years(created_at_iso: str) -> float:
     return age_days / 365.25
 
 
-def last_12_month_labels(now_utc: datetime) -> List[str]:
-    this_month = month_start(now_utc)
-    month_starts = [add_months(this_month, -11 + i) for i in range(12)]
-    return [month_label(m) for m in month_starts]
+def approx_months_ago_iso(months: float) -> str:
+    """
+    GitHub GraphQL expects GitTimestamp.
+    We approximate months using average days/month = 365.25/12.
+    """
+    days = int(round(months * (365.25 / 12.0)))
+    dt = datetime.now(timezone.utc) - timedelta(days=days)
+    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 # ----------------------------
-# GitHub REST / GraphQL helpers
+# GitHub REST helpers
 # ----------------------------
 
 def gh_get(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> requests.Response:
@@ -114,6 +97,72 @@ def gh_json(session: requests.Session, url: str, params: Dict[str, Any] | None =
     return r.json()
 
 
+def repo_info(session: requests.Session, repo: str) -> Dict[str, Any]:
+    return gh_json(session, f"{API}/repos/{repo}")
+
+
+def last_commits(session: requests.Session, repo: str, n: int) -> List[Dict[str, Any]]:
+    data = gh_json(session, f"{API}/repos/{repo}/commits", params={"per_page": n})
+    return data if isinstance(data, list) else []
+
+
+def latest_commit_sha(session: requests.Session, repo: str) -> str:
+    c = last_commits(session, repo, 1)
+    return c[0].get("sha", "") if c else ""
+
+
+def user_profile_email(session: requests.Session, login: str) -> str:
+    u = gh_json(session, f"{API}/users/{login}")
+    return (u.get("email") or "").strip()
+
+
+def is_noreply(email: Optional[str]) -> bool:
+    if not email:
+        return True
+    e = email.lower()
+    return "noreply" in e or e.endswith("@users.noreply.github.com")
+
+
+def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    login = None
+    if isinstance(commit_obj.get("author"), dict):
+        login = commit_obj["author"].get("login")
+
+    commit = commit_obj.get("commit", {})
+    author = commit.get("author", {}) if isinstance(commit, dict) else {}
+    email = author.get("email") if isinstance(author, dict) else None
+    return login, email
+
+
+def top2_devs_from_last100(commits: List[Dict[str, Any]]) -> List[Tuple[str, int, Optional[str]]]:
+    """
+    Top 2 devs by commit count among last 100 commits, requiring >=2 commits.
+    Returns [(login, count, best_non_noreply_commit_email), ...] (len 0..2)
+    """
+    counts: Dict[str, int] = {}
+    best_email: Dict[str, str] = {}
+
+    for c in commits:
+        login, email = extract_commit_identity(c)
+        if not login:
+            continue
+        counts[login] = counts.get(login, 0) + 1
+        if login not in best_email and email and not is_noreply(email):
+            best_email[login] = email
+
+    items = [(login, cnt) for login, cnt in counts.items() if cnt >= 2]
+    items.sort(key=lambda x: (-x[1], x[0]))
+
+    out: List[Tuple[str, int, Optional[str]]] = []
+    for login, cnt in items[:2]:
+        out.append((login, cnt, best_email.get(login)))
+    return out
+
+
+# ----------------------------
+# GitHub GraphQL helpers
+# ----------------------------
+
 def gql_request(session: requests.Session, query: str, variables: Dict[str, Any]) -> Any:
     """GraphQL POST with basic error handling + basic rate-limit handling."""
     while True:
@@ -136,8 +185,51 @@ def gql_request(session: requests.Session, query: str, variables: Dict[str, Any]
         return data.get("data")
 
 
+def total_and_recent_commits_default_branch(session: requests.Session, repo: str, since_iso: str) -> Tuple[int, int]:
+    """
+    Returns:
+      - total commits (all time) on default branch
+      - commits since `since_iso` on default branch
+    """
+    if "/" not in repo:
+        return 0, 0
+    owner, name = repo.split("/", 1)
+
+    query = """
+    query($owner: String!, $name: String!, $since: GitTimestamp!) {
+      repository(owner: $owner, name: $name) {
+        defaultBranchRef {
+          target {
+            ... on Commit {
+              total: history { totalCount }
+              recent: history(since: $since) { totalCount }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    data = gql_request(session, query, {"owner": owner, "name": name, "since": since_iso})
+    repo_data = (data or {}).get("repository") or {}
+    dbr = repo_data.get("defaultBranchRef")
+    if not dbr:
+        return 0, 0
+    target = dbr.get("target") or {}
+    total = int(((target.get("total") or {}).get("totalCount")) or 0)
+    recent = int(((target.get("recent") or {}).get("totalCount")) or 0)
+    return total, recent
+
+
+# ----------------------------
+# Input reading
+# ----------------------------
+
 def read_repos_first_col(csv_path: str) -> List[str]:
-    """Reads first column from CSV with or without header. Keeps unique repos in order."""
+    """
+    Reads first column from CSV with or without header.
+    Keeps unique repos in order. Skips obvious header tokens.
+    """
     repos: List[str] = []
     seen = set()
     header_tokens = {"repo", "repository", "project"}
@@ -160,135 +252,6 @@ def read_repos_first_col(csv_path: str) -> List[str]:
     return repos
 
 
-def repo_info(session: requests.Session, repo: str) -> Dict[str, Any]:
-    return gh_json(session, f"{API}/repos/{repo}")
-
-
-def last_commits(session: requests.Session, repo: str, n: int) -> List[Dict[str, Any]]:
-    data = gh_json(session, f"{API}/repos/{repo}/commits", params={"per_page": n})
-    return data if isinstance(data, list) else []
-
-
-def latest_commit_sha(session: requests.Session, repo: str) -> str:
-    c = last_commits(session, repo, 1)
-    return c[0].get("sha", "") if c else ""
-
-
-def is_noreply(email: Optional[str]) -> bool:
-    if not email:
-        return True
-    e = email.lower()
-    return "noreply" in e or e.endswith("@users.noreply.github.com")
-
-
-def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
-    login = None
-    if isinstance(commit_obj.get("author"), dict):
-        login = commit_obj["author"].get("login")
-
-    commit = commit_obj.get("commit", {})
-    author = commit.get("author", {}) if isinstance(commit, dict) else {}
-    email = author.get("email") if isinstance(author, dict) else None
-    return login, email
-
-
-def top2_devs_from_last100(commits: List[Dict[str, Any]]) -> List[Tuple[str, int, Optional[str]]]:
-    counts: Dict[str, int] = {}
-    best_email: Dict[str, str] = {}
-
-    for c in commits:
-        login, email = extract_commit_identity(c)
-        if not login:
-            continue
-        counts[login] = counts.get(login, 0) + 1
-        if login not in best_email and email and not is_noreply(email):
-            best_email[login] = email
-
-    items = [(login, cnt) for login, cnt in counts.items() if cnt >= 2]
-    items.sort(key=lambda x: (-x[1], x[0]))
-
-    out: List[Tuple[str, int, Optional[str]]] = []
-    for login, cnt in items[:2]:
-        out.append((login, cnt, best_email.get(login)))
-    return out
-
-
-def user_profile_email(session: requests.Session, login: str) -> str:
-    u = gh_json(session, f"{API}/users/{login}")
-    return (u.get("email") or "").strip()
-
-
-def total_commits_default_branch(session: requests.Session, repo: str) -> int:
-    """Exact total commit count (all time) on the repo's default branch, via GraphQL."""
-    if "/" not in repo:
-        return 0
-    owner, name = repo.split("/", 1)
-
-    query = """
-    query($owner: String!, $name: String!) {
-      repository(owner: $owner, name: $name) {
-        defaultBranchRef {
-          target {
-            ... on Commit {
-              history {
-                totalCount
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-
-    data = gql_request(session, query, {"owner": owner, "name": name})
-    repo_data = (data or {}).get("repository") or {}
-    dbr = repo_data.get("defaultBranchRef")
-    if not dbr:
-        return 0
-    target = dbr.get("target") or {}
-    history = target.get("history") or {}
-    return int(history.get("totalCount", 0) or 0)
-
-
-# ----------------------------
-# Local git stats (clone -> log -> delete)
-# ----------------------------
-
-def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> str:
-    return subprocess.check_output(cmd, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
-
-
-def git_monthly_stats(repo: str, labels: List[str]) -> Tuple[List[int], float]:
-    """
-    Returns:
-      - monthly_counts aligned to labels (last 12 months)
-      - avg6 (avg commits/month over last 6 months)
-    Strategy:
-      - partial clone with blobs filtered and no checkout
-      - git log since 12 months ago, date formatted as YYYY-MM, count occurrences
-      - delete repo directory
-    """
-    repo_url = f"https://github.com/{repo}.git"
-    tmpdir = tempfile.mkdtemp(prefix="repo_stats_")
-    try:
-        # Partial clone, no checkout (minimize blobs)
-        run_cmd(["git", "clone", "--filter=blob:none", "--no-checkout", repo_url, tmpdir])
-
-        out = run_cmd(
-            ["git", "log", "--since=12 months ago", "--pretty=format:%ad", "--date=format:%Y-%m"],
-            cwd=tmpdir,
-        )
-        months = out.splitlines() if out else []
-        c = Counter(months)
-
-        monthly_counts = [int(c.get(lbl, 0)) for lbl in labels]
-        avg6 = sum(monthly_counts[-6:]) / 6.0
-        return monthly_counts, avg6
-
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-
 # ----------------------------
 # Main
 # ----------------------------
@@ -297,7 +260,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True, help="Input CSV file (use first column as repo)")
     ap.add_argument("--out", required=True, help="Output CSV path")
-    ap.add_argument("--sleep", type=float, default=0.2, help="Small delay between repos")
+    ap.add_argument("--sleep", type=float, default=0.0, help="Optional delay between repos (seconds)")
     args = ap.parse_args()
 
     token = os.environ.get("GITHUB_TOKEN")
@@ -316,16 +279,14 @@ def main() -> int:
     repos = read_repos_first_col(args.inp)
     log(f"Loaded {len(repos)} repos from {args.inp}")
 
-    now = datetime.now(timezone.utc)
-    labels = last_12_month_labels(now)
+    since_6m = approx_months_ago_iso(6)
 
     fieldnames = [
         "repo",
         "latest_sha",
         "age_years",
-        "commits",
         "stars",
-        *[f"commits_{m}" for m in labels],
+        "total_commits",
         "avg_commits_last_6_months",
         "top1_login",
         "top1_commits_in_last100",
@@ -359,14 +320,10 @@ def main() -> int:
                 log("  fetching latest SHA")
                 row["latest_sha"] = latest_commit_sha(session, repo)
 
-                log("  fetching TOTAL commits via GraphQL (default branch)")
-                row["commits"] = total_commits_default_branch(session, repo)
-
-                log("  cloning repo (partial) and computing monthly stats, then deleting")
-                monthly_counts, avg6 = git_monthly_stats(repo, labels)
-                for m, c in zip(labels, monthly_counts):
-                    row[f"commits_{m}"] = c
-                row["avg_commits_last_6_months"] = f"{avg6:.3f}"
+                log("  fetching total commits + recent commits (GraphQL)")
+                total, recent6 = total_and_recent_commits_default_branch(session, repo, since_6m)
+                row["total_commits"] = total
+                row["avg_commits_last_6_months"] = f"{(recent6 / 6.0):.3f}"
 
                 log("  fetching last 100 commits for top contributors")
                 commits100 = last_commits(session, repo, 100)
@@ -385,10 +342,6 @@ def main() -> int:
 
                 row["notes"] = ";".join(notes)
 
-            except subprocess.CalledProcessError as e:
-                msg = (e.output or "").splitlines()[-1] if getattr(e, "output", None) else str(e)
-                row["notes"] = f"git_error:{msg[:200]}"
-                log(f"  [ERROR] {row['notes']}")
             except Exception as e:
                 row["notes"] = f"error:{type(e).__name__}:{str(e)[:200]}"
                 log(f"  [ERROR] {row['notes']}")
