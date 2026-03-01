@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 """
+Fast repo stats + top contributors + contact email (profile + non-noreply commit email)
+
 Input: Project data in csv format. Use FIRST column as repo (owner/repo).
 
-For each repo, output:
+Outputs per repo:
 - stars
-- commits per month for past 12 months (12 columns)
-- average commits/month over last 6 months (from those 12 buckets)
-- latest commit SHA (most recent on default branch, via /commits?per_page=1)
+- latest commit SHA
+- commits per month for past 12 months (12 columns, YYYY-MM)
+  (computed from /stats/commit_activity weekly totals; fast)
+- average commits/month over last 6 months
 - top 2 developers by commit count among last 100 commits (>=2 commits)
-- contact info for those devs: profile email/blog/twitter + best non-noreply commit email
+- contact email for each dev: GitHub profile email + best non-noreply commit author email
+
+Logging:
+- Prints progress for each repo and key steps
+- Handles GitHub rate limit sleeping
+- Handles stats endpoint 202 Accepted by retrying
+- Flushes output per repo so results are written incrementally
 
 Usage:
   export GITHUB_TOKEN=...
-  python3 repo_participant_stats_from_csv.py --in success_projects.csv --out repo_stats.csv
+  python3 repo_activity_and_contributors.py --in success_projects.csv --out repo_stats.csv
 
 Notes:
-- No filtering is applied. You can filter later in the output CSV.
-- Counts include whatever GitHub /commits returns for the default branch (includes merges/bots).
+- /stats/commit_activity attributes each week’s total to the month containing that week’s start date.
+  This is fast and consistent; if you want exact splitting of weeks across month boundaries, say so.
 """
 
 from __future__ import annotations
@@ -26,13 +35,16 @@ import csv
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-
 API = "https://api.github.com"
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
 
 
 def month_start(dt: datetime) -> datetime:
@@ -45,49 +57,54 @@ def add_months(dt: datetime, months: int) -> datetime:
     return dt.replace(year=y, month=m, day=1)
 
 
-def iso8601(dt: datetime) -> str:
-    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+def month_label(dt: datetime) -> str:
+    return dt.strftime("%Y-%m")
 
 
-def gh_request(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> Any:
+def gh_get(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> requests.Response:
+    """Low-level GET with rate-limit handling (returns Response)."""
     while True:
         r = session.get(url, params=params)
+
         if r.status_code == 403 and "rate limit" in r.text.lower():
-            reset = r.headers.get("X-RateLimit-Reset")
-            if reset:
-                sleep_s = max(0, int(reset) - int(time.time()) + 2)
-                print(f"[rate-limit] sleeping {sleep_s}s...", file=sys.stderr)
-                time.sleep(sleep_s)
-                continue
-        if r.status_code >= 400:
-            raise RuntimeError(f"GitHub API error {r.status_code} for {url}: {r.text[:2000]}")
-        return r.json()
+            reset = int(r.headers.get("X-RateLimit-Reset", 0))
+            remaining = r.headers.get("X-RateLimit-Remaining")
+            wait = max(reset - int(time.time()) + 2, 1)
+            log(f"[RATE LIMIT] remaining={remaining} reset={reset} -> sleeping {wait}s")
+            time.sleep(wait)
+            continue
+
+        return r
 
 
-def is_noreply(email: Optional[str]) -> bool:
-    if not email:
-        return True
-    e = email.lower()
-    return "noreply" in e or e.endswith("@users.noreply.github.com")
+def gh_json(session: requests.Session, url: str, params: Dict[str, Any] | None = None) -> Any:
+    """JSON GET with error handling + rate-limit handling."""
+    r = gh_get(session, url, params=params)
+    if r.status_code >= 400:
+        raise RuntimeError(f"GitHub API error {r.status_code} for {url}: {r.text[:500]}")
+    return r.json()
 
 
-def read_first_col_repos(csv_path: str) -> List[str]:
+def read_repos_first_col(csv_path: str) -> List[str]:
     """
-    Reads first column from a CSV file (header or no header). Keeps non-empty unique repos in order.
+    Reads first column from CSV with or without header.
+    Keeps unique repos in order. Skips obvious header tokens.
     """
     repos: List[str] = []
     seen = set()
+    header_tokens = {"repo", "repository", "project"}
 
     with open(csv_path, "r", encoding="utf-8", errors="ignore", newline="") as f:
-        reader = csv.reader(f)
-        for row in reader:
+        for row in csv.reader(f):
             if not row:
                 continue
             repo = (row[0] or "").strip()
             if not repo:
                 continue
-            # Skip common header tokens if present
-            if repo.lower() in {"repo", "repository", "project"}:
+            if repo.lower() in header_tokens:
+                continue
+            # basic sanity: looks like owner/repo
+            if "/" not in repo:
                 continue
             if repo not in seen:
                 seen.add(repo)
@@ -97,48 +114,27 @@ def read_first_col_repos(csv_path: str) -> List[str]:
 
 
 def repo_info(session: requests.Session, repo: str) -> Dict[str, Any]:
-    return gh_request(session, f"{API}/repos/{repo}")
-
-
-def count_commits_in_range(session: requests.Session, repo: str, since: datetime, until: datetime) -> int:
-    url = f"{API}/repos/{repo}/commits"
-    per_page = 100
-    page = 1
-    count = 0
-
-    while True:
-        data = gh_request(
-            session, url,
-            params={
-                "since": iso8601(since),
-                "until": iso8601(until),
-                "per_page": per_page,
-                "page": page,
-            }
-        )
-        if not data:
-            break
-        count += len(data)
-        if len(data) < per_page:
-            break
-        page += 1
-
-    return count
+    return gh_json(session, f"{API}/repos/{repo}")
 
 
 def last_commits(session: requests.Session, repo: str, n: int) -> List[Dict[str, Any]]:
-    data = gh_request(session, f"{API}/repos/{repo}/commits", params={"per_page": n})
+    data = gh_json(session, f"{API}/repos/{repo}/commits", params={"per_page": n})
     return data if isinstance(data, list) else []
 
 
 def latest_commit_sha(session: requests.Session, repo: str) -> str:
-    commits = last_commits(session, repo, 1)
-    if not commits:
-        return ""
-    return commits[0].get("sha", "") or ""
+    c = last_commits(session, repo, 1)
+    return c[0].get("sha", "") if c else ""
 
 
-def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def is_noreply(email: Optional[str]) -> bool:
+    if not email:
+        return True
+    e = email.lower()
+    return "noreply" in e or e.endswith("@users.noreply.github.com")
+
+
+def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     login = None
     if isinstance(commit_obj.get("author"), dict):
         login = commit_obj["author"].get("login")
@@ -146,23 +142,19 @@ def extract_commit_identity(commit_obj: Dict[str, Any]) -> Tuple[Optional[str], 
     commit = commit_obj.get("commit", {})
     author = commit.get("author", {}) if isinstance(commit, dict) else {}
     email = author.get("email") if isinstance(author, dict) else None
-    name = author.get("name") if isinstance(author, dict) else None
-    return login, email, name
+    return login, email
 
 
-def user_info(session: requests.Session, login: str) -> Dict[str, Any]:
-    return gh_request(session, f"{API}/users/{login}")
-
-
-def top2_devs_from_commits(commits: List[Dict[str, Any]]) -> List[Tuple[str, int, Optional[str]]]:
+def top2_devs_from_last100(commits: List[Dict[str, Any]]) -> List[Tuple[str, int, Optional[str]]]:
     """
-    Returns up to 2 (login, count, best_non_noreply_commit_email) with count>=2.
+    Top 2 devs by commit count among last 100 commits, requiring >=2 commits.
+    Returns [(login, count, best_non_noreply_commit_email), ...] (len 0..2)
     """
     counts: Dict[str, int] = {}
     best_email: Dict[str, str] = {}
 
     for c in commits:
-        login, email, _name = extract_commit_identity(c)
+        login, email = extract_commit_identity(c)
         if not login:
             continue
         counts[login] = counts.get(login, 0) + 1
@@ -178,6 +170,55 @@ def top2_devs_from_commits(commits: List[Dict[str, Any]]) -> List[Tuple[str, int
     return out
 
 
+def user_profile_email(session: requests.Session, login: str) -> str:
+    u = gh_json(session, f"{API}/users/{login}")
+    return (u.get("email") or "").strip()
+
+
+def get_commit_activity_weeks(session: requests.Session, repo: str, max_retries: int = 10) -> List[Dict[str, Any]]:
+    """
+    GET /stats/commit_activity
+    May return 202 while GitHub prepares stats. Retry with backoff.
+    """
+    url = f"{API}/repos/{repo}/stats/commit_activity"
+    for i in range(max_retries):
+        r = gh_get(session, url)
+
+        if r.status_code == 202:
+            sleep_s = min(30.0, 2.0 * (i + 1))
+            log(f"  [stats] 202 Accepted (generating) -> retry in {sleep_s:.1f}s")
+            time.sleep(sleep_s)
+            continue
+
+        if r.status_code >= 400:
+            raise RuntimeError(f"GitHub stats error {r.status_code} for {repo}: {r.text[:300]}")
+
+        data = r.json()
+        if isinstance(data, list):
+            return data
+        return []
+
+    raise RuntimeError(f"stats/commit_activity not ready after {max_retries} retries for {repo}")
+
+
+def monthly_counts_from_weeks(weeks: List[Dict[str, Any]], month_labels: List[str]) -> List[int]:
+    """
+    weeks: list of 52 objects: {"total": int, "week": unix_ts, "days":[...]}
+    We attribute each week's 'total' to the month containing the week start date.
+    """
+    totals = {m: 0 for m in month_labels}
+    for w in weeks:
+        ts = w.get("week")
+        total = int(w.get("total", 0))
+        if ts is None:
+            continue
+        dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+        mk = month_label(dt)
+        if mk in totals:
+            totals[mk] += total
+    return [totals[m] for m in month_labels]
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="inp", required=True, help="Input CSV file (use first column as repo)")
@@ -187,7 +228,7 @@ def main() -> int:
 
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
-        print("ERROR: Please set GITHUB_TOKEN in your environment.", file=sys.stderr)
+        log("ERROR: Please set GITHUB_TOKEN in your environment.")
         return 2
 
     session = requests.Session()
@@ -195,88 +236,92 @@ def main() -> int:
         "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "repo-participant-stats-script",
+        "User-Agent": "sample-repos-and-participants",
     })
 
-    repos = read_first_col_repos(args.inp)
+    repos = read_repos_first_col(args.inp)
+    log(f"Loaded {len(repos)} repos from {args.inp}")
 
     now = datetime.now(timezone.utc)
     this_month = month_start(now)
-    month_starts = [add_months(this_month, -11 + i) for i in range(12)]  # oldest -> newest
-    month_ends = [add_months(ms, 1) for ms in month_starts]
-    month_labels = [ms.strftime("%Y-%m") for ms in month_starts]
+
+    # 12 buckets: oldest -> newest (includes current month-to-date as newest bucket)
+    month_starts = [add_months(this_month, -11 + i) for i in range(12)]
+    labels = [month_label(m) for m in month_starts]
 
     fieldnames = [
         "repo",
         "stars",
         "latest_sha",
-        *[f"commits_{m}" for m in month_labels],
+        *[f"commits_{m}" for m in labels],
         "avg_commits_last_6_months",
         "top1_login",
         "top1_commits_in_last100",
         "top1_profile_email",
         "top1_commit_email",
-        "top1_blog",
-        "top1_twitter",
         "top2_login",
         "top2_commits_in_last100",
         "top2_profile_email",
         "top2_commit_email",
-        "top2_blog",
-        "top2_twitter",
         "notes",
     ]
 
     with open(args.out, "w", newline="", encoding="utf-8") as out_f:
         w = csv.DictWriter(out_f, fieldnames=fieldnames)
         w.writeheader()
+        out_f.flush()
 
         for idx, repo in enumerate(repos, 1):
+            log(f"[{idx}/{len(repos)}] {repo}")
             row: Dict[str, Any] = {k: "" for k in fieldnames}
             row["repo"] = repo
             notes: List[str] = []
 
             try:
+                log("  fetching repo info (stars)")
                 info = repo_info(session, repo)
                 row["stars"] = info.get("stargazers_count", "")
 
+                log("  fetching latest SHA")
                 row["latest_sha"] = latest_commit_sha(session, repo)
 
-                monthly_counts: List[int] = []
-                for ms, me, label in zip(month_starts, month_ends, month_labels):
-                    c = count_commits_in_range(session, repo, ms, me)
-                    row[f"commits_{label}"] = c
-                    monthly_counts.append(c)
+                log("  fetching commit_activity stats (fast)")
+                weeks = get_commit_activity_weeks(session, repo)
+                counts = monthly_counts_from_weeks(weeks, labels)
+                for m, c in zip(labels, counts):
+                    row[f"commits_{m}"] = c
+                row["avg_commits_last_6_months"] = sum(counts[-6:]) / 6.0
 
-                last6 = monthly_counts[-6:]
-                row["avg_commits_last_6_months"] = (sum(last6) / 6.0)
-
+                log("  fetching last 100 commits for top contributors")
                 commits100 = last_commits(session, repo, 100)
-                top2 = top2_devs_from_commits(commits100)
+                top2 = top2_devs_from_last100(commits100)
+
                 if not top2:
                     notes.append("no_dev_with_>=2_commits_in_last100")
                 else:
                     for k, (login, cnt, commit_email) in enumerate(top2, 1):
-                        u = user_info(session, login)
+                        log(f"    top{k}: {login} ({cnt} commits) -> fetching profile email")
+                        prof_email = user_profile_email(session, login)
                         row[f"top{k}_login"] = login
                         row[f"top{k}_commits_in_last100"] = cnt
-                        row[f"top{k}_profile_email"] = u.get("email", "") or ""
+                        row[f"top{k}_profile_email"] = prof_email
                         row[f"top{k}_commit_email"] = commit_email or ""
-                        row[f"top{k}_blog"] = u.get("blog", "") or ""
-                        row[f"top{k}_twitter"] = u.get("twitter_username", "") or ""
+
+                row["notes"] = ";".join(notes)
 
             except Exception as e:
-                notes.append(f"error:{type(e).__name__}:{str(e)[:160]}")
+                row["notes"] = f"error:{type(e).__name__}:{str(e)[:200]}"
+                log(f"  [ERROR] {row['notes']}")
 
-            row["notes"] = ";".join(notes)
             w.writerow(row)
+            out_f.flush()  # make sure results are written incrementally
 
             if args.sleep:
                 time.sleep(args.sleep)
-            if idx % 50 == 0:
-                print(f"Processed {idx}/{len(repos)} repos...", file=sys.stderr)
 
-    print(f"Wrote: {args.out}", file=sys.stderr)
+            log(f"  done: wrote row for {repo}")
+
+    log(f"Wrote output: {args.out}")
     return 0
 
 
