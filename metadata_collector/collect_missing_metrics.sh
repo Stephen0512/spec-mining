@@ -162,6 +162,20 @@ write_row() {
 # ---------------- Output header ----------------
 echo "project,owner,repo,sha,url,sloc,stars,age_years,commit_count,stmt_cov_pct,branch_cov_pct,notes" > "$OUT_CSV"
 
+# Count valid project rows for progress reporting.
+TOTAL_PROJECTS="$(awk -F',' '
+  {
+    line=$0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+    if (line == "") next
+    low=tolower(line)
+    if (low ~ /^(project|owner|repo|sha)/) next
+    if (index(line, ",") == 0) next
+    print line
+  }
+' "$INPUT_CSV" | wc -l | tr -d '[:space:]')"
+PROCESSED_PROJECTS=0
+
 # ---------------- Main loop ----------------
 tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
   line="${line#"${line%%[![:space:]]*}"}"
@@ -185,7 +199,8 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
   project="${owner}-${repo}"
   url="https://github.com/${owner}/${repo}.git"
 
-  echo "===== ${owner_repo} @ ${sha} ====="
+  PROCESSED_PROJECTS=$((PROCESSED_PROJECTS + 1))
+  echo "[${PROCESSED_PROJECTS}/${TOTAL_PROJECTS}] ===== ${owner_repo} @ ${sha} ====="
 
   CLONE_DIR="${WORKDIR}/${project}_Original"
   REPO_DIR="${CLONE_DIR}/${repo}"
