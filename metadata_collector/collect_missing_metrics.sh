@@ -306,11 +306,18 @@ tail -n +1 "$INPUT_CSV" | while IFS= read -r line || [ -n "$line" ]; do
     add_note notes "coverage_failed"
   fi
 
-  # Zip artifacts (never fatal)
-  zip_name_abs="$(cd "$WORKDIR" && pwd)/${project}_Original.zip"
-  ( cd "$CLONE_DIR" && zip -qr "$zip_name_abs" \
-      "./${repo}/${repo}_Output.txt" "./${repo}/coverage.xml" "./${repo}/coverage_run.log" \
-      2>/dev/null ) || true
+  # Preserve artifacts as plain files (no zip)
+  artifacts_dir="${WORKDIR}/artifacts/${project}_Original/${repo}"
+  mkdir -p "$artifacts_dir"
+  cp -f "${REPO_DIR}/${repo}_Output.txt" "$artifacts_dir/" 2>/dev/null || true
+  cp -f "${REPO_DIR}/coverage.xml" "$artifacts_dir/" 2>/dev/null || true
+  cp -f "${REPO_DIR}/coverage_run.log" "$artifacts_dir/" 2>/dev/null || true
+
+  # # Zip artifacts (never fatal)
+  # zip_name_abs="$(cd "$WORKDIR" && pwd)/${project}_Original.zip"
+  # ( cd "$CLONE_DIR" && zip -qr "$zip_name_abs" \
+  #     "./${repo}/${repo}_Output.txt" "./${repo}/coverage.xml" "./${repo}/coverage_run.log" \
+  #     2>/dev/null ) || true
 
   # Write CSV row
   write_row "$project" "$owner" "$repo" "$sha" "$url" "$sloc" "$stars" "$age_years" "$commit_count" "$stmt_cov" "$branch_cov" "$notes"
