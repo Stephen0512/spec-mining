@@ -1,1 +1,13 @@
-pycryptodome
+cffi==2.0.0
+cryptography==46.0.3
+iniconfig==2.3.0
+numpy==2.3.5
+packaging==26.0
+pandas==3.0.0
+pluggy==1.6.0
+pycparser==3.0
+pycryptodome==3.23.0
+Pygments==2.19.2
+pytest==9.0.2
+python-dateutil==2.9.0.post0
+six==1.17.0

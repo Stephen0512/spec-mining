@@ -1,0 +1,13 @@
+attrs==25.4.0
+coverage==7.13.2
+hypothesis==6.124.7
+iniconfig==2.3.0
+numpy==2.3.5
+packaging==26.0
+pandas==3.0.0
+pluggy==1.6.0
+pytest==8.3.4
+pytest-cov==6.0.0
+python-dateutil==2.9.0.post0
+six==1.17.0
+sortedcontainers==2.4.0

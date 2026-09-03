@@ -1,0 +1,17 @@
+attrs==25.4.0
+chardet==5.2.0
+iniconfig==2.3.0
+joblib==1.5.3
+more-itertools==10.8.0
+music21==6.5.0
+numpy==2.3.5
+packaging==26.0
+pandas==3.0.0
+pluggy==1.6.0
+py==1.11.0
+pytest==6.2.5
+python-dateutil==2.9.0.post0
+setuptools==52.0.0
+six==1.17.0
+toml==0.10.2
+webcolors==25.10.0
