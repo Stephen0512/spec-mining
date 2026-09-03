@@ -6,12 +6,16 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      links_csv:
+        description: 'Repo-relative path to a CSV (col A = GitHub URL, col B = SHA). If set, Google Sheets is skipped. Default is Algorithm_Experiment/links.csv.'
+        required: false
+        default: 'Algorithm_Experiment/links.csv'
       google_sheet_id:
-        description: 'ID of the Google Sheet containing repository links and where results will be appended. Id is located in the URL of the Google Sheet https://docs.google.com/spreadsheets/d/<ID>/edit. The sheet should add "mass-run-mop@mohas-filemap-cloud.iam.gserviceaccount.com" as an editor'
-        required: true
-        default: '1L7j3JowPmOdJFYYvbJQiKq4F8UzoFvxI8wWN9SPchrQ'
+        description: 'Optional Google Sheet ID. Used only when links_csv is empty. Share the sheet with mass-run-mop@mohas-filemap-cloud.iam.gserviceaccount.com as an editor.'
+        required: false
+        default: ''
       links_worksheetTitle:
-        description: 'Title of the tab containing the links. Default is "links". The first column should contain the links to the repositories. a maximum of 256 links can be added.'
+        description: 'Sheet tab name. Used only when links_csv is empty. First column is repo URLs. Maximum 256 links.'
         required: false
         default: 'links-1'
       release_name:
@@ -32,12 +36,14 @@ jobs:
           fetch-depth: 0
 
       - name: Install Dependencies
+        if: ${{ !github.event.inputs.links_csv }}
         run: pip3 install pygsheets PyGithub
 
       - name: Prepare matrix
         id: set-matrix
         run: python3 scripts/get_repo_links.py
         env:
+            LINKS_CSV: ${{ github.event.inputs.links_csv }}
             GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
             GOOGLE_SHEET_ID: ${{ github.event.inputs.google_sheet_id }}
             LINKS_TAB_NAME: ${{github.event.inputs.links_worksheetTitle}}
