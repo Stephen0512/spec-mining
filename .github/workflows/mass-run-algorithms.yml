@@ -50,7 +50,7 @@ jobs:
 
   run_jobs:
     needs: fetch_data
-    uses: mohasarc/spec-mining/.github/workflows/run-single-algorithms.yml@main
+    uses: ./.github/workflows/run-single-algorithms.yml
     with:
       project-link: ${{ matrix.repo-link }}
       release-name: ${{ github.event.inputs.release_name }}
