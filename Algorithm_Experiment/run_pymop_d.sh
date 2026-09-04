@@ -126,6 +126,7 @@ git checkout exp/instru_strategy
 
 # Install the project in editable mode with dev dependencies
 pip install . || { echo "Failed to install pymop"; exit 1; }
+pip install "setuptools<81.0.0"
 
 # ------------------------------------------------------------------------------------------------
 # Run the tests

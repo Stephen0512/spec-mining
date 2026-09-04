@@ -65,6 +65,7 @@ fi
 
 # Install numpy
 pip install numpy==2.3.5
+pip install "setuptools<81.0.0"
 
 # Install dependencies from all requirement files if they exist
 for file in *.txt; do
