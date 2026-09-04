@@ -29,6 +29,9 @@ jobs:
           - run_pymop_c+.sh
           - run_pymop_d.sh
           - run_pymop_d_libs.sh
+          - run_pymop_ast.sh
+          - run_pymop_curse.sh
+          - run_pymop_builtin.sh
     steps:
       - uses: actions/checkout@v4
         with:
