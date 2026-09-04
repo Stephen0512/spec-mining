@@ -100,7 +100,12 @@ fi
 if [ -f myInstall.sh ]; then
     bash ./myInstall.sh
 else
-    pip install .[dev,test,tests,testing]
+    # Special handling for some repositories
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ]; then
+        pip install .[dev,test,tests,testing] --no-build-isolation
+    else
+        pip install .[dev,test,tests,testing]
+    fi
 fi
 
 # Install required Python packages

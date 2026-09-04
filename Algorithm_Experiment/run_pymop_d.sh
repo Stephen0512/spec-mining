@@ -95,11 +95,17 @@ if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_s
     pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
 fi
 
+
 # Install the package with test dependencies using custom install script if available
 if [ -f myInstall.sh ]; then
     bash ./myInstall.sh
 else
-    pip install .[dev,test,tests,testing]
+    # Special handling for some repositories
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ]; then
+        pip install .[dev,test,tests,testing] --no-build-isolation
+    else
+        pip install .[dev,test,tests,testing]
+    fi
 fi
 
 # Install required Python packages
