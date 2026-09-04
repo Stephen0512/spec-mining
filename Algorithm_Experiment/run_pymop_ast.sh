@@ -28,7 +28,7 @@ TESTING_REPO_NAME=$(basename -s .git "$TESTING_REPO_URL")
 DEVELOPER_ID=$(echo "$TESTING_REPO_URL" | sed -E 's|https://github.com/([^/]+)/.*|\1|')
 
 # Create combined name with developer ID and repo name
-CLONE_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_PyMOP_D_Libs"
+CLONE_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_PyMOP_Ast"
 
 # Create the directory if it does not exist
 mkdir -p "$CLONE_DIR"
@@ -149,10 +149,10 @@ TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 # Run tests with 1-hour timeout and save output
 # Special handling for some repositories
 if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
-    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=Ast.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 else
-    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=Ast.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 fi
 
@@ -187,9 +187,9 @@ echo "Test Time: ${TEST_TIME}s" >> $RESULTS_FILE
 
 # Copy the necessary files to the $CLONE_DIR directory
 cp "${TESTING_REPO_NAME}/${TESTING_REPO_NAME}_Output.txt" $CLONE_DIR/
-cp $TESTING_REPO_NAME/D-full.json $CLONE_DIR/D-full.json
-cp $TESTING_REPO_NAME/D-time.json $CLONE_DIR/D-time.json
-cp $TESTING_REPO_NAME/D-violations.json $CLONE_DIR/D-violations.json
+cp $TESTING_REPO_NAME/Ast-full.json $CLONE_DIR/Ast-full.json
+cp $TESTING_REPO_NAME/Ast-time.json $CLONE_DIR/Ast-time.json
+cp $TESTING_REPO_NAME/Ast-violations.json $CLONE_DIR/Ast-violations.json
 
 # Archive results
 zip -r "${CLONE_DIR}.zip" $CLONE_DIR
