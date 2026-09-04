@@ -110,9 +110,19 @@ fi
 # Record test start time
 TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd py
+fi
+
 # Run tests with 1-hour timeout and save output
 /usr/bin/time -v timeout -k 9 1500 pytest --continue-on-collection-errors -p no:sugar &> ${TESTING_REPO_NAME}_Output.txt
 exit_code=$?
+
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd ..
+fi
 
 # Process test results if no timeout occurred
 if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
@@ -153,9 +163,19 @@ PY
     # Install pytest-cov
     pip install pytest-cov
 
+    # Special handling for some repositories
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+        cd py
+    fi
+
     # Collect coverage
     pytest --cov=. --cov-report=term-missing:skip-covered --cov-report=term --cov-report=xml:${TESTING_REPO_NAME}_Coverage.xml --cov-branch --cov-fail-under=0 > ${TESTING_REPO_NAME}_Coverage.txt 2>&1
     
+    # Special handling for some repositories
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+        cd ..
+    fi
+
     # Parse coverage XML if it exists
     REPO_DIR="$PWD"
     STMT_COV=""

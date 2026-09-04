@@ -140,9 +140,19 @@ cd $TESTING_REPO_NAME
 # Record the start time of the test execution
 TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd py
+fi
+
 # Run tests with 1-hour timeout and save output
 /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
 exit_code=$?
+
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    cd ..
+fi
 
 # Process test results if no timeout occurred
 if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
