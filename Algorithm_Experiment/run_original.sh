@@ -97,7 +97,8 @@ if [ -f myInstall.sh ]; then
     bash ./myInstall.sh
 else
     # Special handling for some repositories
-    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ]; then
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ] || \
+       [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "RedHatQE-wrapanapi_85ac73c90eef34eb80c7adf7ff1b9de4966111b8" ]; then
         pip install .[dev,test,tests,testing] --no-build-isolation
     else
         pip install .[dev,test,tests,testing]
