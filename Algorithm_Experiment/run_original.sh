@@ -89,7 +89,11 @@ fi
 # echo "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}"
 # popd &> /dev/null
 if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" ]; then
-    pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "RedHatQE-wrapanapi_85ac73c90eef34eb80c7adf7ff1b9de4966111b8" ]; then
+        pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" --no-build-isolation
+    else
+        pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
+    fi
 fi
 
 # Install the package with test dependencies using custom install script if available
@@ -97,8 +101,7 @@ if [ -f myInstall.sh ]; then
     bash ./myInstall.sh
 else
     # Special handling for some repositories
-    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ] || \
-       [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "RedHatQE-wrapanapi_85ac73c90eef34eb80c7adf7ff1b9de4966111b8" ]; then
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ]; then
         pip install .[dev,test,tests,testing] --no-build-isolation
     else
         pip install .[dev,test,tests,testing]
