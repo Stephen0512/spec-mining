@@ -23,7 +23,7 @@ on:
         default: all-results-2024-05-18-morning
         required: true
       original_d_d_libs_only:
-        description: 'If checked, only run run_original.sh, run_pymop_d.sh, and run_pymop_d_libs.sh.'
+        description: 'If checked, only run run_original.sh and run_pymop_d.sh.'
         type: boolean
         default: false
         required: false

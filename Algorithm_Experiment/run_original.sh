@@ -112,9 +112,13 @@ fi
 pip install pytest
 pip install pandas
 
-if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" ]; then
-    echo "pytest.ini found. Copying to current directory..."
-    cp "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" .
+PYTEST_INI_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}"
+if [ -f "$PWD/../../pytest-files/${PYTEST_INI_DIR}/pytest.ini" ]; then
+    echo "pytest.ini found in pytest-files. Copying to current directory..."
+    cp "$PWD/../../pytest-files/${PYTEST_INI_DIR}/pytest.ini" .
+elif [ -f "$PWD/../../requirements/${PYTEST_INI_DIR}/pytest.ini" ]; then
+    echo "pytest.ini found in requirements. Copying to current directory..."
+    cp "$PWD/../../requirements/${PYTEST_INI_DIR}/pytest.ini" .
 fi
 
 # Record test start time
