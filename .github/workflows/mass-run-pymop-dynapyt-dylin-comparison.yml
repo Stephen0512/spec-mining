@@ -6,18 +6,22 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
+      links_csv:
+        description: 'Repo-relative path to a CSV (col A = GitHub URL, col B = SHA). If set, Google Sheets is skipped. Default is DyLin_DynaPyt_Experiment/links.csv.'
+        required: false
+        default: 'DyLin_DynaPyt_Experiment/links.csv'
       google_sheet_id:
-        description: 'ID of the Google Sheet containing repository links and where results will be appended. Id is located in the URL of the Google Sheet https://docs.google.com/spreadsheets/d/<ID>/edit. The sheet should add "mass-run-mop@mohas-filemap-cloud.iam.gserviceaccount.com" as an editor'
-        required: true
-        default: '1L7j3JowPmOdJFYYvbJQiKq4F8UzoFvxI8wWN9SPchrQ'
+        description: 'Optional Google Sheet ID. Used only when links_csv is empty. Share the sheet with mass-run-mop@mohas-filemap-cloud.iam.gserviceaccount.com as an editor.'
+        required: false
+        default: ''
       links_worksheetTitle:
-        description: 'Title of the tab containing the links. Default is "links". The first column should contain the links to the repositories. a maximum of 256 links can be added.'
+        description: 'Sheet tab name. Used only when links_csv is empty. First column is repo URLs. Maximum 256 links.'
         required: false
         default: 'links-1'
       status_number:
-        description: 'Status number of the experiment. 1 for 8 specs, 2 for 12 specs, 3 for 8+19 specs, 4 for 12+19 specs'
+        description: 'Status number of the experiment. 1 for 8 specs, 2 for 12 specs, 3 for 8+19 specs, 4 for 12+19 specs, 5 for 8+12 with pymop (scripts run in parallel).'
         required: true
-        default: '1'
+        default: '5'
       libraries_enabled:
         description: 'Whether to run the with libraries enabled scripts. 1 for libraries enabled, 0 for libraries disabled.'
         required: true
@@ -26,6 +30,11 @@ on:
         description: 'Name of the release to be created.'
         default: all-results-2024-05-18-morning
         required: true
+      original_only:
+        description: 'If checked, only run run_original.sh.'
+        type: boolean
+        default: false
+        required: false
   # repository_dispatch:
   #   types: [run-multiple-repos]
 
@@ -40,24 +49,27 @@ jobs:
           fetch-depth: 0
 
       - name: Install Dependencies
+        if: ${{ !github.event.inputs.links_csv }}
         run: pip3 install pygsheets PyGithub
 
       - name: Prepare matrix
         id: set-matrix
         run: python3 scripts/get_repo_links.py
         env:
+            LINKS_CSV: ${{ github.event.inputs.links_csv }}
             GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
             GOOGLE_SHEET_ID: ${{ github.event.inputs.google_sheet_id }}
             LINKS_TAB_NAME: ${{github.event.inputs.links_worksheetTitle}}
 
   run_jobs:
     needs: fetch_data
-    uses: mohasarc/spec-mining/.github/workflows/run-single-pymop-dynapyt-dylin-comparison.yml@main
+    uses: ./.github/workflows/run-single-pymop-dynapyt-dylin-comparison.yml
     with:
       project-link: ${{ matrix.repo-link }}
       status_number: ${{ github.event.inputs.status_number }}
       libraries_enabled: ${{ github.event.inputs.libraries_enabled }}
       release-name: ${{ github.event.inputs.release_name }}
+      original_only: ${{ github.event.inputs.original_only == 'true' }}
     secrets:
       GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
     strategy:

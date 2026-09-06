@@ -15,69 +15,140 @@ on:
       release-name:
         required: true
         type: string
-    secrets: 
+      original_only:
+        required: false
+        type: boolean
+        default: false
+    secrets:
       GH_ACCESS_TOKEN:
-        required: true 
+        required: true
+
 jobs:
-  run-comparison:
+  run-script:
+    if: ${{ inputs.original_only || inputs.status_number == '5' }}
+    name: ${{ matrix.script }}
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        script: ${{ fromJson(inputs.original_only && '["run_original.sh"]' || (inputs.libraries_enabled == '0' && '["run_original.sh","run_dynapyt_8_with_pymop.sh","run_pymop_8_with_pymop.sh","run_dylin_8_with_pymop.sh"]' || '["run_original.sh","run_dynapyt_8_with_pymop.sh","run_pymop_8_with_pymop.sh","run_dylin_8_with_pymop.sh","run_dynapyt_12_with_pymop.sh","run_pymop_12_with_pymop.sh","run_dylin_12_with_pymop.sh","run_pymop_libs_8_with_pymop.sh","run_dynapyt_libs_with_pymop.sh"]')) }}
     steps:
-        - uses: actions/checkout@v4
-          with:
-            fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-        - name: Setup variables
-          run: |
-              REPO_URL=$(echo "${{ inputs.project-link }}" | sed 's/;.*//')
-              REPO_NAME="${REPO_URL##*/}"  # This strips everything before the last '/' character
-              OWNER_NAME="${REPO_URL%/$REPO_NAME}"  # Removes the repo name from the URL, leaving the owner path
-              OWNER_NAME="${OWNER_NAME##*/}"  # Extracts only the owner name
-              FULL_REPO_NAME="$OWNER_NAME-$REPO_NAME"  # Combines owner and repository names with a dash
+      - name: Setup variables
+        run: |
+            REPO_URL=$(echo "${{ inputs.project-link }}" | sed 's/;.*//')
+            REPO_NAME="${REPO_URL##*/}"
+            OWNER_NAME="${REPO_URL%/$REPO_NAME}"
+            OWNER_NAME="${OWNER_NAME##*/}"
+            FULL_REPO_NAME="$OWNER_NAME-$REPO_NAME"
 
-              ZIP_FILE="${FULL_REPO_NAME}_Experiment_PYMOP.zip"
-              echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
-              echo "FULL_REPO_NAME=$FULL_REPO_NAME" >> $GITHUB_ENV
-              echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
-              echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
-          shell: bash
-        
-        - name: Prepare results dir
-          run: |
-            cd ./DyLin_DynaPyt_Experiment
-            mkdir ./results
-            
-        - name: Install python3-tk
-          run: |
-            sudo apt-get update
-            sudo apt-get install -y python3-tk
-            
-        - name: Run Experiment
-          run: |
-            cd ./DyLin_DynaPyt_Experiment
-            ls -l
-            chmod +x ./run_experiment.sh
-            ./run_experiment.sh "${{ inputs.project-link }}" "${{ inputs.status_number }}" "${{ inputs.libraries_enabled }}"
-          env:
-            GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+            echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+            echo "FULL_REPO_NAME=$FULL_REPO_NAME" >> $GITHUB_ENV
+            echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
+        shell: bash
 
-        - name: Zip only .zip files
-          run: |
-            cd ./DyLin_DynaPyt_Experiment
-            zip -j ../$ZIP_FILE ./*.zip  # -j to junk paths and include only .zip files
-            ls -l ../
-          shell: bash
-    
-        - name: Upload report to GitHub Release
-          uses: Wandalen/wretry.action@master
-          with:
-            attempt_delay: 60000 # 1 min
-            attempt_limit: 10
-            action: softprops/action-gh-release@v1
-            with: |
-              files: ./${{env.ZIP_FILE}}
-              tag_name: ${{ inputs.release-name }}
-              name: ${{ inputs.release-name }}
-              draft: false
-              prerelease: true
-              token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare results dir
+        run: |
+          cd ./DyLin_DynaPyt_Experiment
+          mkdir ./results
 
+      - name: Install python3-tk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Run ${{ matrix.script }}
+        run: |
+          cd ./DyLin_DynaPyt_Experiment
+          ls -l
+          chmod +x ./${{ matrix.script }}
+          bash ./${{ matrix.script }} "${{ inputs.project-link }}"
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Upload report to GitHub Release
+        if: ${{ hashFiles('DyLin_DynaPyt_Experiment/*.zip') != '' }}
+        uses: Wandalen/wretry.action@master
+        with:
+          attempt_delay: 60000
+          attempt_limit: 10
+          action: softprops/action-gh-release@v1
+          with: |
+            files: DyLin_DynaPyt_Experiment/*.zip
+            tag_name: ${{ inputs.release-name }}
+            name: ${{ inputs.release-name }}
+            draft: false
+            prerelease: true
+            token: ${{ secrets.GITHUB_TOKEN }}
+
+  run-comparison:
+    if: ${{ !inputs.original_only && inputs.status_number != '5' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup variables
+        run: |
+            REPO_URL=$(echo "${{ inputs.project-link }}" | sed 's/;.*//')
+            REPO_NAME="${REPO_URL##*/}"
+            OWNER_NAME="${REPO_URL%/$REPO_NAME}"
+            OWNER_NAME="${OWNER_NAME##*/}"
+            FULL_REPO_NAME="$OWNER_NAME-$REPO_NAME"
+
+            ZIP_FILE="${FULL_REPO_NAME}_Experiment_PYMOP.zip"
+            echo "REPO_NAME=$REPO_NAME" >> $GITHUB_ENV
+            echo "FULL_REPO_NAME=$FULL_REPO_NAME" >> $GITHUB_ENV
+            echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
+            echo "REPO_URL=$REPO_URL" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Prepare results dir
+        run: |
+          cd ./DyLin_DynaPyt_Experiment
+          mkdir ./results
+
+      - name: Install python3-tk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Run Experiment
+        run: |
+          cd ./DyLin_DynaPyt_Experiment
+          ls -l
+          chmod +x ./run_experiment.sh
+          ./run_experiment.sh "${{ inputs.project-link }}" "${{ inputs.status_number }}" "${{ inputs.libraries_enabled }}"
+        env:
+          GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
+
+      - name: Zip only .zip files
+        run: |
+          cd ./DyLin_DynaPyt_Experiment
+          zip -j ../$ZIP_FILE ./*.zip
+          ls -l ../
+        shell: bash
+
+      - name: Upload report to GitHub Release
+        uses: Wandalen/wretry.action@master
+        with:
+          attempt_delay: 60000
+          attempt_limit: 10
+          action: softprops/action-gh-release@v1
+          with: |
+            files: ./${{env.ZIP_FILE}}
+            tag_name: ${{ inputs.release-name }}
+            name: ${{ inputs.release-name }}
+            draft: false
+            prerelease: true
+            token: ${{ secrets.GITHUB_TOKEN }}
