@@ -26,7 +26,7 @@ on:
 jobs:
   run-script:
     if: ${{ inputs.original_only || inputs.status_number == '5' }}
-    name: ${{ matrix.script }}
+    name: ${{ matrix.job }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        script: ${{ fromJson(inputs.original_only && '["run_original.sh"]' || (inputs.libraries_enabled == '0' && '["run_original.sh","run_dynapyt_8_with_pymop.sh","run_pymop_8_with_pymop.sh","run_dylin_8_with_pymop.sh"]' || '["run_original.sh","run_dynapyt_8_with_pymop.sh","run_pymop_8_with_pymop.sh","run_dylin_8_with_pymop.sh","run_dynapyt_12_with_pymop.sh","run_pymop_12_with_pymop.sh","run_dylin_12_with_pymop.sh","run_pymop_libs_8_with_pymop.sh","run_dynapyt_libs_with_pymop.sh"]')) }}
+        job: ${{ fromJson(inputs.original_only && '["original"]' || (inputs.libraries_enabled == '0' && '["original","specs_8","specs_12"]' || '["original_pymop_libs","dynapyt_libs","specs_8","specs_12"]')) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,12 +63,47 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y python3-tk
 
-      - name: Run ${{ matrix.script }}
+      - name: Run ${{ matrix.job }}
         run: |
           cd ./DyLin_DynaPyt_Experiment
           ls -l
-          chmod +x ./${{ matrix.script }}
-          bash ./${{ matrix.script }} "${{ inputs.project-link }}"
+          case "${{ matrix.job }}" in
+            original)
+              scripts=("run_original.sh")
+              ;;
+            original_pymop_libs)
+              scripts=("run_original.sh" "run_pymop_libs_8_with_pymop.sh")
+              ;;
+            dynapyt_libs)
+              scripts=("run_dynapyt_libs_with_pymop.sh")
+              ;;
+            specs_8)
+              scripts=("run_dynapyt_8_with_pymop.sh" "run_pymop_8_with_pymop.sh" "run_dylin_8_with_pymop.sh")
+              ;;
+            specs_12)
+              scripts=("run_dynapyt_12_with_pymop.sh" "run_pymop_12_with_pymop.sh" "run_dylin_12_with_pymop.sh")
+              ;;
+            *)
+              echo "Unknown job group: ${{ matrix.job }}"
+              exit 1
+              ;;
+          esac
+          failed=0
+          for script in "${scripts[@]}"; do
+            echo "🚀 Running $script"
+            chmod +x "./$script"
+            if bash "./$script" "${{ inputs.project-link }}"; then
+              echo "✅ Finished $script"
+            else
+              echo "❌ $script failed"
+              if [ "$script" = "run_original.sh" ] && [ "${{ matrix.job }}" = "original_pymop_libs" ]; then
+                echo "Skipping remaining scripts because run_original.sh failed"
+                exit 1
+              fi
+              failed=1
+            fi
+          done
+          exit $failed
         env:
           GH_ACCESS_TOKEN: ${{ secrets.GH_ACCESS_TOKEN }}
 

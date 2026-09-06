@@ -19,7 +19,7 @@ on:
         required: false
         default: 'links-1'
       status_number:
-        description: 'Status number of the experiment. 1 for 8 specs, 2 for 12 specs, 3 for 8+19 specs, 4 for 12+19 specs, 5 for 8+12 with pymop (scripts run in parallel).'
+        description: 'Status number of the experiment. 1 for 8 specs, 2 for 12 specs, 3 for 8+19 specs, 4 for 12+19 specs, 5 for 8+12 with pymop (4 parallel jobs: original+pymop_libs, dynapyt_libs, specs_8, specs_12).'
         required: true
         default: '5'
       libraries_enabled:

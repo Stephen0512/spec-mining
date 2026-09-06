@@ -17,7 +17,8 @@ echo "Url: $TESTING_REPO_URL"
 echo "Sha: $target_sha"
 
 # Fixed repository URL for the mop-with-dynapt project
-PYMOP_REPO_URL="https://$GH_ACCESS_TOKEN@github.com/SoftEngResearch/mop-with-dynapt.git"
+PYMOP_REPO_URL="https://github.com/SoftEngResearch/pymop.git"
+# PYMOP_REPO_URL="https://$GH_ACCESS_TOKEN@github.com/SoftEngResearch/mop-with-dynapt.git"
 # PYMOP_REPO_URL="git@github.com:SoftEngResearch/mop-with-dynapt.git"
 
 # Extract the repository name from the URL
@@ -136,14 +137,15 @@ fi
 # Return to the parent directory
 cd ..
 
-# Clone the mop-with-dynapt repository
+# Clone the pymop repository
 git clone "$PYMOP_REPO_URL" || { echo "Failed to clone $PYMOP_REPO_URL"; exit 1; }
 
-# Navigate to the mop-with-dynapt directory
-cd mop-with-dynapt
+# Navigate to the pymop directory
+cd pymop
+git checkout exp/instru_strategy
 
 # Install the project in editable mode with dev dependencies
-pip install . || { echo "Failed to install mop-with-dynapt"; exit 1; }
+pip install . || { echo "Failed to install pymop"; exit 1; }
 
 # ------------------------------------------------------------------------------------------------
 # Run the tests
@@ -161,10 +163,10 @@ TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 # Run tests with 1-hour timeout and save output
 # Special handling for some repositories
 if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
-    /usr/bin/time -v timeout -k 9 3200 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYMOP_INSTRUMENTATION_STRATEGY=ast PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 else
-    /usr/bin/time -v timeout -k 9 3200 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYMOP_INSTRUMENTATION_STRATEGY=ast PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../pymop/specs-new PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_INSTRUMENT_SITE_PACKAGES=True PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 fi
 
