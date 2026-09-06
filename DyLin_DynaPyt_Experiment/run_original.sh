@@ -65,6 +65,7 @@ fi
 
 # Install numpy
 pip install numpy==2.3.5
+pip install "setuptools<81.0.0"
 
 # Install dependencies from all requirement files if they exist
 for file in *.txt; do
@@ -88,30 +89,50 @@ fi
 # echo "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}"
 # popd &> /dev/null
 if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" ]; then
-    pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "RedHatQE-wrapanapi_85ac73c90eef34eb80c7adf7ff1b9de4966111b8" ]; then
+        pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt" --no-build-isolation
+    else
+        pip install -r "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/requirements.txt"
+    fi
 fi
 
 # Install the package with test dependencies using custom install script if available
 if [ -f myInstall.sh ]; then
     bash ./myInstall.sh
 else
-    pip install .[dev,test,tests,testing]
+    # Special handling for some repositories
+    if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "inspirehep-es-cli_9c4e669" ]; then
+        pip install .[dev,test,tests,testing] --no-build-isolation
+    else
+        pip install .[dev,test,tests,testing]
+    fi
 fi
 
 # Install required Python packages
 pip install pytest
 pip install pandas
 
-if [ -f "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" ]; then
-    cp "$PWD/../../requirements/${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}/pytest.ini" .
+PYTEST_INI_DIR="${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}"
+if [ -f "$PWD/../../pytest-files/${PYTEST_INI_DIR}/pytest.ini" ]; then
+    echo "pytest.ini found in pytest-files. Copying to current directory..."
+    cp "$PWD/../../pytest-files/${PYTEST_INI_DIR}/pytest.ini" .
+elif [ -f "$PWD/../../requirements/${PYTEST_INI_DIR}/pytest.ini" ]; then
+    echo "pytest.ini found in requirements. Copying to current directory..."
+    cp "$PWD/../../requirements/${PYTEST_INI_DIR}/pytest.ini" .
 fi
 
 # Record test start time
 TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 
 # Run tests with 1-hour timeout and save output
-/usr/bin/time -v timeout -k 9 1500 pytest --continue-on-collection-errors &> ${TESTING_REPO_NAME}_Output.txt
-exit_code=$?
+# Special handling for some repositories
+if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
+    /usr/bin/time -v timeout -k 9 1500 pytest py/ --continue-on-collection-errors -p no:sugar &> ${TESTING_REPO_NAME}_Output.txt
+    exit_code=$?
+else
+    /usr/bin/time -v timeout -k 9 1500 pytest --continue-on-collection-errors -p no:sugar &> ${TESTING_REPO_NAME}_Output.txt
+    exit_code=$?
+fi
 
 # Process test results if no timeout occurred
 if [ $exit_code -ne 124 ] && [ $exit_code -ne 137 ]; then
