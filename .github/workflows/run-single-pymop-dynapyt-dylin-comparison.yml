@@ -15,7 +15,7 @@ on:
       release-name:
         required: true
         type: string
-      original_only:
+      skip_dynapyt_libs:
         required: false
         type: boolean
         default: false
@@ -25,7 +25,7 @@ on:
 
 jobs:
   run-script:
-    if: ${{ inputs.original_only || inputs.status_number == '5' }}
+    if: ${{ inputs.status_number == '5' }}
     name: ${{ matrix.job }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        job: ${{ fromJson(inputs.original_only && '["original"]' || (inputs.libraries_enabled == '0' && '["original","specs_8","specs_12"]' || '["original_pymop_libs","dynapyt_libs","specs_8","specs_12"]')) }}
+        job: ${{ fromJson(inputs.skip_dynapyt_libs && '["original_pymop_libs","specs_8","specs_12"]' || (inputs.libraries_enabled == '0' && '["original","specs_8","specs_12"]' || '["original_pymop_libs","dynapyt_libs","specs_8","specs_12"]')) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,7 +123,7 @@ jobs:
             token: ${{ secrets.GITHUB_TOKEN }}
 
   run-comparison:
-    if: ${{ !inputs.original_only && inputs.status_number != '5' }}
+    if: ${{ inputs.status_number != '5' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
