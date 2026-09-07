@@ -163,10 +163,10 @@ TEST_START_TIME=$(python3 -c 'import time; print(time.time())')
 # Run tests with 1-hour timeout and save output
 # Special handling for some repositories
 if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "SeleniumHQ-selenium_97d56d04e1b4ab4f8e527f8849b777c1e91d13f7" ]; then
-    /usr/bin/time -v timeout -k 9 3200 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYMOP_INSTRUMENTATION_STRATEGY=ast PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest py/ --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 else
-    /usr/bin/time -v timeout -k 9 3200 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYMOP_INSTRUMENTATION_STRATEGY=ast PYTHONPATH="$PWD"/../mop-with-dynapt/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
+    /usr/bin/time -v timeout -k 9 19000 bash -c 'PYMOP_SPEC_FOLDER="$PWD"/../../Specs_libs_with_PyMOP/PyMOP PYMOP_ALGO=D PYMOP_INSTRUMENTATION_STRATEGY=ast PYMOP_STATISTICS=yes PYMOP_STATISTICS_FILE=D.json PYTHONPATH="$PWD"/../pymop/pythonmop/pymop-startup-helper/ pytest --continue-on-collection-errors -p no:sugar' &> ${TESTING_REPO_NAME}_Output.txt
     exit_code=$?
 fi
 
