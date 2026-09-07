@@ -1,14 +1,5 @@
 repo_url,sha
-https://github.com/andialbrecht/sqlparse,a801100e9843786a9139bebb97c951603637129c
-https://github.com/ansys/pyansys-tools-versioning,d713280
-https://github.com/auth0/auth0-python,288acf2ed5fee0ecb7c91146e54ab0630c0ef511
 https://github.com/citrusvanilla/tinyflux,42c2214
 https://github.com/jdotpy/streamline,5d29ccf67ad1018be5b597eb1499c8d8d2c0fc84
-https://github.com/lidatong/dataclasses-json,dc63902eeb5e1c5ce1ea4e078c50e0eb9bc1a541
-https://github.com/optuna/optunahub,d6245cc79d41b3245dd67a1205396ad7fe28b27d
-https://github.com/pawamoy/git-changelog,0466f5ace706086fef82ff6d577169d4291693f5
 https://github.com/pdyba/lambdalizator,fa1d26e
-https://github.com/pyvista/fast-simplification,420a5e12c22165938bd0967935f08bd37b233d17
-https://github.com/snstac/pytak,94db0b8e7260e90c7fb1610121bf0a14dacf20b5
 https://github.com/suds-community/suds,fae24d440cd9357070ab56748b3774b2b4bbf21c
-https://github.com/twisted/towncrier,4db63611094d96424c63c796415781c2994f3928
