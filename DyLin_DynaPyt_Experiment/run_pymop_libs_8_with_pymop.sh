@@ -53,6 +53,9 @@ cd "$TESTING_REPO_NAME" || { echo "Failed to enter directory $TESTING_REPO_NAME"
 # Create a virtual environment in the project directory using Python's built-in venv
 python3 -m venv venv
 
+# Activate the virtual environment
+source venv/bin/activate
+
 # Special handling for some repositories
 if [ "${DEVELOPER_ID}-${TESTING_REPO_NAME}_${target_sha}" == "alstr-todo-to-issue-action_165cd5e" ]; then
     sed -i '' \
