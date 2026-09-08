@@ -12,6 +12,10 @@ on:
         required: false
         type: boolean
         default: false
+      a_only:
+        required: false
+        type: boolean
+        default: false
     secrets:
       GH_ACCESS_TOKEN:
         required: true
@@ -26,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        script: ${{ fromJson(inputs.original_d_d_libs_only && '["run_original.sh","run_pymop_d.sh","run_pymop_d_libs.sh"]' || '["run_original.sh","run_pymop_b.sh","run_pymop_c.sh","run_pymop_c+.sh","run_pymop_d.sh","run_pymop_d_libs.sh","run_pymop_ast.sh","run_pymop_curse.sh","run_pymop_builtin.sh"]') }}
+        script: ${{ fromJson(inputs.a_only && '["run_pymop_a.sh"]' || inputs.original_d_d_libs_only && '["run_original.sh","run_pymop_d.sh","run_pymop_d_libs.sh"]' || '["run_original.sh","run_pymop_b.sh","run_pymop_c.sh","run_pymop_c+.sh","run_pymop_d.sh","run_pymop_d_libs.sh","run_pymop_ast.sh","run_pymop_curse.sh","run_pymop_builtin.sh"]') }}
     steps:
       - uses: actions/checkout@v4
         with:
